@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ParkingSquare } from "lucide-react";
 import ResultsSection from "./components/ResultsSection.jsx";
 import SearchPanel from "./components/SearchPanel.jsx";
-import { getDevelopmentParkingResults } from "./services/parkingResultsProvider.js";
+import {
+  getConfiguredParkingMode,
+  getParkingResults,
+} from "./services/parkingResultsProvider.js";
 
 function SiteHeader() {
   return (
@@ -67,13 +70,51 @@ function ParkingIllustration() {
 
 function App() {
   const [search, setSearch] = useState(null);
+  const requestId = useRef(0);
+  const requestController = useRef(null);
+
+  useEffect(
+    () => () => {
+      requestController.current?.abort();
+    },
+    [],
+  );
 
   function handleSearch(criteria) {
-    setSearch(
-      criteria
-        ? { criteria, results: getDevelopmentParkingResults() }
-        : null,
-    );
+    requestId.current += 1;
+    const currentRequestId = requestId.current;
+    requestController.current?.abort();
+
+    if (!criteria) {
+      requestController.current = null;
+      setSearch(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    requestController.current = controller;
+    const mode = getConfiguredParkingMode();
+    setSearch({ criteria, mode, status: "loading", results: [] });
+
+    getParkingResults(criteria, { signal: controller.signal })
+      .then(({ mode: resultMode, results }) => {
+        if (requestId.current !== currentRequestId || controller.signal.aborted) {
+          return;
+        }
+        setSearch({ criteria, mode: resultMode, status: "success", results });
+      })
+      .catch((error) => {
+        if (requestId.current !== currentRequestId || controller.signal.aborted) {
+          return;
+        }
+        setSearch({
+          criteria,
+          mode,
+          status: "error",
+          results: [],
+          error: error instanceof Error ? error.message : "Unable to load parking results.",
+        });
+      });
   }
 
   return (
@@ -99,7 +140,16 @@ function App() {
           </div>
           <ParkingIllustration />
         </section>
-        {search && <ResultsSection criteria={search.criteria} results={search.results} />}
+        {search && (
+          <ResultsSection
+            criteria={search.criteria}
+            mode={search.mode}
+            status={search.status}
+            results={search.results}
+            error={search.error}
+            onRetry={() => handleSearch(search.criteria)}
+          />
+        )}
       </main>
       <footer className="site-footer">
         <span>ParkSmart AI</span>

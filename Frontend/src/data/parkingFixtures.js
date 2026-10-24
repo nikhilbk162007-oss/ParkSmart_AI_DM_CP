@@ -7,9 +7,9 @@ export const parkingFixtures = [
     predictedOccupiedSpaces: 286,
     predictedFreeSpaces: 134,
     distanceKm: 0.7,
+    coordinates: [18.5204, 73.8567],
+    coordinateSource: "simulated-development",
     recommendationStatus: "Preview option",
-    recommendationExplanation:
-      "Illustrative fixture text only; no recommendation engine has run.",
   },
   {
     id: "fixture-market",
@@ -19,6 +19,8 @@ export const parkingFixtures = [
     predictedOccupiedSpaces: 198,
     predictedFreeSpaces: 112,
     distanceKm: 1.2,
+    coordinates: [18.5314, 73.8446],
+    coordinateSource: "simulated-development",
   },
   {
     id: "fixture-garden",
@@ -28,5 +30,7 @@ export const parkingFixtures = [
     predictedOccupiedSpaces: 371,
     predictedFreeSpaces: 189,
     distanceKm: 2.1,
+    coordinates: [18.5074, 73.8077],
+    coordinateSource: "simulated-development",
   },
 ];

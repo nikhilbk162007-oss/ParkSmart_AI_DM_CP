@@ -237,6 +237,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+Run the installation command from the `backend/` directory. Its requirements
+include the local editable `ml-model` package, so this also installs the ML
+package and its declared runtime dependencies.
 
 ### 2. Configure Environment
 ```bash

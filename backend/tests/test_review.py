@@ -16,6 +16,8 @@ Covers every requirement from the review checklist:
  13. Update (PATCH) and delete of missing resource
  14. Deterministic, no live MongoDB required
 """
+
+import importlib
 import pytest
 from pydantic import ValidationError
 from fastapi.testclient import TestClient
@@ -124,19 +126,31 @@ class TestParkingFacilityModelValidation:
 
     def test_latitude_above_90_rejected(self):
         with pytest.raises(ValidationError, match="Latitude"):
-            ParkingFacility(id="x", name="X", totalCapacity=10, coordinates=[91.0, 73.85])
+            ParkingFacility(
+                id="x", name="X", totalCapacity=10,
+                coordinates=[91.0, 73.85],
+            )
 
     def test_latitude_below_minus90_rejected(self):
         with pytest.raises(ValidationError, match="Latitude"):
-            ParkingFacility(id="x", name="X", totalCapacity=10, coordinates=[-91.0, 73.85])
+            ParkingFacility(
+                id="x", name="X", totalCapacity=10,
+                coordinates=[-91.0, 73.85],
+            )
 
     def test_longitude_above_180_rejected(self):
         with pytest.raises(ValidationError, match="Longitude"):
-            ParkingFacility(id="x", name="X", totalCapacity=10, coordinates=[18.52, 181.0])
+            ParkingFacility(
+                id="x", name="X", totalCapacity=10,
+                coordinates=[18.52, 181.0],
+            )
 
     def test_longitude_below_minus180_rejected(self):
         with pytest.raises(ValidationError, match="Longitude"):
-            ParkingFacility(id="x", name="X", totalCapacity=10, coordinates=[18.52, -181.0])
+            ParkingFacility(
+                id="x", name="X", totalCapacity=10,
+                coordinates=[18.52, -181.0],
+            )
 
     def test_missing_coordinates_rejected(self):
         with pytest.raises(ValidationError):
@@ -147,7 +161,9 @@ class TestParkingFacilityModelValidation:
             ParkingFacility(
                 id="x", name="X", totalCapacity=100,
                 coordinates=[18.52, 73.85],
-                currentOccupancy=CurrentOccupancyMeasured(occupiedSpaces=110, freeSpaces=0),
+                currentOccupancy=CurrentOccupancyMeasured(
+                    occupiedSpaces=110, freeSpaces=0
+                ),
             )
 
     def test_occupied_plus_free_not_equal_capacity_rejected(self):
@@ -155,12 +171,16 @@ class TestParkingFacilityModelValidation:
             ParkingFacility(
                 id="x", name="X", totalCapacity=100,
                 coordinates=[18.52, 73.85],
-                currentOccupancy=CurrentOccupancyMeasured(occupiedSpaces=60, freeSpaces=50),
+                currentOccupancy=CurrentOccupancyMeasured(
+                    occupiedSpaces=60, freeSpaces=50
+                ),
             )
 
     def test_zero_capacity_without_occupancy_is_valid(self):
-        f = ParkingFacility(id="lot-zero", name="Closed", totalCapacity=0,
-                            coordinates=[18.52, 73.85])
+        f = ParkingFacility(
+            id="lot-zero", name="Closed", totalCapacity=0,
+            coordinates=[18.52, 73.85],
+        )
         assert f.total_capacity == 0
         assert f.current_occupancy is None
 
@@ -178,8 +198,10 @@ class TestParkingFacilityModelValidation:
         assert occ.occupancy_percentage == 75.0
 
     def test_is_simulated_defaults_to_true(self):
-        f = ParkingFacility(id="lot-def", name="Default", totalCapacity=50,
-                            coordinates=[18.52, 73.85])
+        f = ParkingFacility(
+            id="lot-def", name="Default", totalCapacity=50,
+            coordinates=[18.52, 73.85],
+        )
         assert f.is_simulated is True
 
 
@@ -208,7 +230,7 @@ class TestPredictionVsMeasuredSeparation:
                 targetTime="2026-10-25T14:30:00+00:00",
                 totalCapacity=100,
                 predictedOccupiedSpaces=60,
-                predictedFreeSpaces=50,  # 110 != 100
+                predictedFreeSpaces=50,
                 occupancyPercentage=60.0,
             )
 
@@ -239,71 +261,91 @@ class TestAPISchemaValidation:
 
     def test_post_parking_missing_id_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "name": "Missing ID", "totalCapacity": 100, "coordinates": [18.52, 73.85]
+            "name": "Missing ID",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 422
         assert res.json()["error"]["type"] == "validation_error"
 
     def test_post_parking_missing_name_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-no-name", "totalCapacity": 100, "coordinates": [18.52, 73.85]
+            "id": "lot-no-name",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 422
 
     def test_post_parking_missing_coordinates_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-no-coords", "name": "No Coords", "totalCapacity": 100
+            "id": "lot-no-coords",
+            "name": "No Coords",
+            "totalCapacity": 100,
         })
         assert res.status_code == 422
 
     def test_post_parking_negative_capacity_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-neg", "name": "Neg Cap", "totalCapacity": -50,
-            "coordinates": [18.52, 73.85]
+            "id": "lot-neg",
+            "name": "Neg Cap",
+            "totalCapacity": -50,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 422
         assert res.json()["error"]["type"] == "validation_error"
 
     def test_post_parking_invalid_lat_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-badlat", "name": "Bad Lat", "totalCapacity": 100,
-            "coordinates": [200.0, 73.85]
+            "id": "lot-badlat",
+            "name": "Bad Lat",
+            "totalCapacity": 100,
+            "coordinates": [200.0, 73.85],
         })
         assert res.status_code == 422
 
     def test_post_parking_invalid_lon_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-badlon", "name": "Bad Lon", "totalCapacity": 100,
-            "coordinates": [18.52, -200.0]
+            "id": "lot-badlon",
+            "name": "Bad Lon",
+            "totalCapacity": 100,
+            "coordinates": [18.52, -200.0],
         })
         assert res.status_code == 422
 
     def test_post_parking_whitespace_id_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "   ", "name": "Whitespace ID", "totalCapacity": 100,
-            "coordinates": [18.52, 73.85]
+            "id": "   ",
+            "name": "Whitespace ID",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 422
 
     def test_post_parking_occupied_exceeds_capacity_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-overflow", "name": "Overflow", "totalCapacity": 100,
+            "id": "lot-overflow",
+            "name": "Overflow",
+            "totalCapacity": 100,
             "coordinates": [18.52, 73.85],
-            "currentOccupancy": {"occupiedSpaces": 150, "freeSpaces": 0}
+            "currentOccupancy": {"occupiedSpaces": 150, "freeSpaces": 0},
         })
         assert res.status_code == 422
 
     def test_post_parking_occupied_plus_free_mismatch_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-mismatch", "name": "Mismatch", "totalCapacity": 100,
+            "id": "lot-mismatch",
+            "name": "Mismatch",
+            "totalCapacity": 100,
             "coordinates": [18.52, 73.85],
-            "currentOccupancy": {"occupiedSpaces": 60, "freeSpaces": 60}
+            "currentOccupancy": {"occupiedSpaces": 60, "freeSpaces": 60},
         })
         assert res.status_code == 422
 
     def test_post_parking_extra_fields_ignored_not_500(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-extra", "name": "Extra Fields", "totalCapacity": 50,
+            "id": "lot-extra",
+            "name": "Extra Fields",
+            "totalCapacity": 50,
             "coordinates": [18.52, 73.85],
             "unknownField": "should-be-ignored",
         })
@@ -325,8 +367,11 @@ class TestParkingCRUD:
 
     def test_create_returns_201_with_required_schema_fields(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": "lot-create-review", "name": "Create Review Lot",
-            "totalCapacity": 300, "coordinates": [18.52, 73.85], "isSimulated": True
+            "id": "lot-create-review",
+            "name": "Create Review Lot",
+            "totalCapacity": 300,
+            "coordinates": [18.52, 73.85],
+            "isSimulated": True,
         })
         assert res.status_code == 201
         data = res.json()
@@ -335,14 +380,15 @@ class TestParkingCRUD:
         assert "isSimulated" in data
         assert "dataSource" in data
         assert "coordinateSource" in data
-        # Must NOT have prediction fields in a parking record
         assert "predictedOccupiedSpaces" not in data
         assert "predictedFreeSpaces" not in data
 
     def test_create_duplicate_returns_409_with_structured_error(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": VALID_FIXTURE_ID, "name": "Dupe",
-            "totalCapacity": 100, "coordinates": [18.52, 73.85]
+            "id": VALID_FIXTURE_ID,
+            "name": "Dupe",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 409
         data = res.json()
@@ -380,7 +426,10 @@ class TestParkingCRUD:
         assert res.json()["name"] == "Renamed"
 
     def test_patch_invalid_capacity_returns_422(self, client: TestClient):
-        res = client.patch(f"/api/parking/{VALID_FIXTURE_ID}", json={"totalCapacity": -999})
+        res = client.patch(
+            f"/api/parking/{VALID_FIXTURE_ID}",
+            json={"totalCapacity": -999},
+        )
         assert res.status_code == 422
 
     def test_filter_min_capacity(self, client: TestClient):
@@ -418,35 +467,44 @@ class TestParkingCRUD:
 
 class TestPredictionsAPI:
     def test_prediction_response_has_predicted_not_measured_fields(self, client: TestClient):
-        res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00")
+        res = client.get(
+            f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
+        )
         assert res.status_code == 200
         data = res.json()
-        # Correct predicted fields present
         assert "predictedOccupiedSpaces" in data
         assert "predictedFreeSpaces" in data
         assert "occupancyPercentage" in data
         assert "modelSource" in data
         assert "parkingId" in data
         assert "totalCapacity" in data
-        # Measured fields must NOT appear at top level
         assert "occupiedSpaces" not in data
         assert "currentOccupancy" not in data
         assert "freeSpaces" not in data
 
     def test_prediction_invariant(self, client: TestClient):
-        res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00")
+        res = client.get(
+            f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
+        )
         assert res.status_code == 200
         data = res.json()
-        assert data["predictedOccupiedSpaces"] + data["predictedFreeSpaces"] == data["totalCapacity"]
+        assert (
+            data["predictedOccupiedSpaces"] + data["predictedFreeSpaces"]
+            == data["totalCapacity"]
+        )
 
     def test_prediction_percentage_in_bounds(self, client: TestClient):
-        res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00")
+        res = client.get(
+            f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
+        )
         assert res.status_code == 200
         pct = res.json()["occupancyPercentage"]
         assert 0.0 <= pct <= 100.0
 
     def test_mock_prediction_labeled_simulated_baseline(self, client: TestClient):
-        res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00")
+        res = client.get(
+            f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
+        )
         assert res.status_code == 200
         assert res.json()["modelSource"] == "simulated-baseline"
 
@@ -455,10 +513,26 @@ class TestPredictionsAPI:
         assert res.status_code == 404
         assert res.json()["error"]["type"] == "not_found"
 
-    def test_ml_module_unavailable_returns_503_not_fabricated_200(self, client: TestClient):
-        """When ML module is missing → 503, never a fabricated successful prediction."""
-        with patch.object(settings, "ML_ADAPTER_MODE", "module"):
+    def test_ml_module_unavailable_returns_503_not_fabricated_200(
+        self, client: TestClient
+    ):
+        """When ML module is missing, return 503, never a fabricated prediction."""
+        real_import_module = importlib.import_module
+
+        def import_module(name, package=None):
+            if name == "ml_model.predict":
+                raise ModuleNotFoundError(
+                    "No module named 'ml_model.predict'",
+                    name="ml_model.predict",
+                )
+            return real_import_module(name, package)
+
+        with (
+            patch.object(settings, "ML_ADAPTER_MODE", "module"),
+            patch("importlib.import_module", side_effect=import_module),
+        ):
             res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}")
+
         assert res.status_code == 503
         data = res.json()
         assert data["error"]["type"] == "integration_unavailable"
@@ -466,9 +540,13 @@ class TestPredictionsAPI:
         assert "predictedFreeSpaces" not in data
 
     def test_ml_http_unavailable_returns_503(self, client: TestClient):
-        with patch.object(settings, "ML_ADAPTER_MODE", "http"), \
-             patch.object(settings, "ML_SERVICE_URL", "http://127.0.0.1:59998"):
-            res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00")
+        with (
+            patch.object(settings, "ML_ADAPTER_MODE", "http"),
+            patch.object(settings, "ML_SERVICE_URL", "http://127.0.0.1:59998"),
+        ):
+            res = client.get(
+                f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
+            )
         assert res.status_code == 503
 
     def test_prediction_is_deterministic(self, client: TestClient):
@@ -486,7 +564,8 @@ class TestPredictionsAPI:
 class TestRecommendationsAPI:
     def test_recommendations_ids_unique(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Pune", "arrivalTime": "2026-10-25T14:30:00"
+            "destination": "Pune",
+            "arrivalTime": "2026-10-25T14:30:00",
         })
         assert res.status_code == 200
         ids = [item["id"] for item in res.json()]
@@ -494,7 +573,8 @@ class TestRecommendationsAPI:
 
     def test_recommendation_schema_fields(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Riverfront, Pune", "arrivalTime": "2026-10-25T09:00:00"
+            "destination": "Riverfront, Pune",
+            "arrivalTime": "2026-10-25T09:00:00",
         })
         assert res.status_code == 200
         for opt in res.json():
@@ -505,21 +585,25 @@ class TestRecommendationsAPI:
             assert "predictedFreeSpaces" in opt
             assert "distanceKm" in opt
             assert "coordinates" in opt
-            # Must be predicted, not measured
             assert "occupiedSpaces" not in opt
             assert "currentOccupancy" not in opt
 
     def test_recommendation_invariant(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Pune", "arrivalTime": "2026-10-25T14:30:00"
+            "destination": "Pune",
+            "arrivalTime": "2026-10-25T14:30:00",
         })
         assert res.status_code == 200
         for opt in res.json():
-            assert (opt["predictedOccupiedSpaces"] + opt["predictedFreeSpaces"]
-                    == opt["totalCapacity"])
+            assert (
+                opt["predictedOccupiedSpaces"] + opt["predictedFreeSpaces"]
+                == opt["totalCapacity"]
+            )
 
     def test_recommendation_missing_destination_returns_422(self, client: TestClient):
-        res = client.post("/api/recommendations", json={"arrivalTime": "2026-10-25T14:30:00"})
+        res = client.post("/api/recommendations", json={
+            "arrivalTime": "2026-10-25T14:30:00"
+        })
         assert res.status_code == 422
 
     def test_recommendation_missing_arrival_time_returns_422(self, client: TestClient):
@@ -536,15 +620,19 @@ class TestRecommendationsAPI:
 
     def test_recommendation_whitespace_destination_returns_422(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "   ", "arrivalTime": "2026-10-25T14:30:00"
+            "destination": "   ",
+            "arrivalTime": "2026-10-25T14:30:00",
         })
         assert res.status_code == 422
 
-    def test_rec_engine_unavailable_returns_503_not_fabricated_200(self, client: TestClient):
+    def test_rec_engine_unavailable_returns_503_not_fabricated_200(
+        self, client: TestClient
+    ):
         """Recommendation engine missing → 503, never fabricated 200 list."""
         with patch.object(settings, "REC_ADAPTER_MODE", "module"):
             res = client.post("/api/recommendations", json={
-                "destination": "Pune", "arrivalTime": "2026-10-25T14:30:00"
+                "destination": "Pune",
+                "arrivalTime": "2026-10-25T14:30:00",
             })
         assert res.status_code == 503
         data = res.json()
@@ -556,7 +644,8 @@ class TestRecommendationsAPI:
         app.dependency_overrides[get_parking_repository] = lambda: empty_repo
         try:
             res = client.post("/api/recommendations", json={
-                "destination": "Pune", "arrivalTime": "2026-10-25T14:30:00"
+                "destination": "Pune",
+                "arrivalTime": "2026-10-25T14:30:00",
             })
             assert res.status_code == 200
             assert res.json() == []
@@ -578,8 +667,10 @@ class TestErrorResponseStructure:
 
     def test_409_structure(self, client: TestClient):
         res = client.post("/api/parking", json={
-            "id": VALID_FIXTURE_ID, "name": "Dup",
-            "totalCapacity": 100, "coordinates": [18.52, 73.85]
+            "id": VALID_FIXTURE_ID,
+            "name": "Dup",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
         })
         assert res.status_code == 409
         err = res.json()["error"]
@@ -595,8 +686,22 @@ class TestErrorResponseStructure:
         assert isinstance(err["details"], list)
 
     def test_503_structure_for_integration(self, client: TestClient):
-        with patch.object(settings, "ML_ADAPTER_MODE", "module"):
+        real_import_module = importlib.import_module
+
+        def import_module(name, package=None):
+            if name == "ml_model.predict":
+                raise ModuleNotFoundError(
+                    "No module named 'ml_model.predict'",
+                    name="ml_model.predict",
+                )
+            return real_import_module(name, package)
+
+        with (
+            patch.object(settings, "ML_ADAPTER_MODE", "module"),
+            patch("importlib.import_module", side_effect=import_module),
+        ):
             res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}")
+
         assert res.status_code == 503
         err = res.json()["error"]
         assert err["type"] == "integration_unavailable"
@@ -669,7 +774,9 @@ class TestRepositoryDatabaseErrors:
     def test_mongo_repo_create_none_db_raises(self):
         repo = MongoParkingRepository(db=None)
         facility = ParkingFacility(
-            id="test-id", name="Test", totalCapacity=100,
+            id="test-id",
+            name="Test",
+            totalCapacity=100,
             coordinates=[18.52, 73.85],
         )
         with pytest.raises(RuntimeError, match="not initialized"):
@@ -677,13 +784,20 @@ class TestRepositoryDatabaseErrors:
 
     def test_mongo_repo_upsert_none_db_returns_false(self):
         repo = MongoParkingRepository(db=None)
-        assert repo.upsert({"id": "test", "name": "T", "totalCapacity": 100}) is False
+        assert repo.upsert({
+            "id": "test",
+            "name": "T",
+            "totalCapacity": 100,
+        }) is False
 
     def test_inmemory_repo_returns_defensive_copies(self):
         """Mutating returned records must not affect the internal store."""
         repo = InMemoryParkingRepository([{
-            "id": "lot-a", "name": "Lot A", "totalCapacity": 100,
-            "coordinates": [18.52, 73.85], "isSimulated": True,
+            "id": "lot-a",
+            "name": "Lot A",
+            "totalCapacity": 100,
+            "coordinates": [18.52, 73.85],
+            "isSimulated": True,
         }])
         results = repo.get_all()
         results[0]["name"] = "MUTATED"
@@ -706,7 +820,7 @@ class TestMongoDBClientLifecycle:
 
     def test_disconnect_safe_when_never_connected(self):
         client_obj = MongoDBClient()
-        client_obj.disconnect()  # must not raise
+        client_obj.disconnect()
 
     def test_properties_none_when_not_connected(self):
         client_obj = MongoDBClient()
@@ -733,8 +847,12 @@ class TestMongoDBClientLifecycle:
 
 class TestStableStringIDs:
     def test_facility_id_is_string(self):
-        f = ParkingFacility(id="stable-id-123", name="Test",
-                            totalCapacity=50, coordinates=[18.52, 73.85])
+        f = ParkingFacility(
+            id="stable-id-123",
+            name="Test",
+            totalCapacity=50,
+            coordinates=[18.52, 73.85],
+        )
         assert isinstance(f.id, str)
 
     def test_api_list_ids_are_strings(self, client: TestClient):

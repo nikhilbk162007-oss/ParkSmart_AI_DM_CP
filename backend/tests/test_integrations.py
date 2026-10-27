@@ -55,9 +55,24 @@ async def test_mock_ml_adapter_bounds_and_invariants():
 @pytest.mark.asyncio
 async def test_module_ml_adapter_when_unconfigured_raises_integration_error():
     """Uninstalled or unconfigured Python module raises IntegrationUnavailableError."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def import_module(name, package=None):
+        if name == "ml_model.predict":
+            raise ModuleNotFoundError(
+                "No module named 'ml_model.predict'",
+                name="ml_model.predict",
+            )
+        return real_import_module(name, package)
+
     adapter = ModuleMLAdapter()
-    with pytest.raises(IntegrationUnavailableError) as exc_info:
-        await adapter.predict_occupancy("lot-1", 100, datetime.now(timezone.utc))
+    with patch("importlib.import_module", side_effect=import_module):
+        with pytest.raises(IntegrationUnavailableError) as exc_info:
+            await adapter.predict_occupancy(
+                "lot-1", 100, datetime.now(timezone.utc)
+            )
     assert "ML Model" in str(exc_info.value)
     assert "not installed" in str(exc_info.value)
 

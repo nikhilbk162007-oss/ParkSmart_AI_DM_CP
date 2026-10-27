@@ -1,50 +1,19 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
-
+# pyrefly: ignore[missing-import]
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class RecommendationRequest(BaseModel):
-    """
-    Search criteria sent by Frontend search form:
-    - destination: Required non-empty string.
-    - arrivalTime: Required ISO-8601 timestamp.
-    """
     destination: str = Field(..., min_length=1, description="Destination address or place")
-    arrival_time: datetime = Field(..., alias="arrivalTime", description="Target arrival timestamp in ISO-8601 format")
-
-    @field_validator("destination")
-    @classmethod
-    def validate_destination_not_blank(cls, v: str) -> str:
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("Destination cannot be empty or whitespace")
-        return stripped
-
-    @field_validator("arrival_time", mode="before")
-    @classmethod
-    def parse_and_validate_iso_timestamp(cls, v):
-        if isinstance(v, str):
-            # Parse ISO-8601 string
-            try:
-                # fromisoformat handles standard ISO 8601 (e.g. 2026-10-25T14:30:00 or with timezone)
-                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
-                return dt
-            except Exception as e:
-                raise ValueError(f"Invalid ISO-8601 timestamp format: '{v}'. Error: {e}")
-        return v
+    arrival_time: datetime = Field(..., alias="arrivalTime", description="Target arrival timestamp")
 
     model_config = ConfigDict(
         populate_by_name=True,
         serialize_by_alias=True
     )
 
-
 class ParkingOption(BaseModel):
-    """
-    Individual parking recommendation option conforming strictly to
-    Frontend ParkingCard and validateApiResults contracts.
-    """
-    id: str = Field(..., min_length=1, description="Unique facility identifier")
+    id: str = Field(..., description="Unique facility identifier")
     name: str = Field(..., description="Facility name")
     total_capacity: int = Field(..., ge=0, alias="totalCapacity")
     predicted_occupied_spaces: int = Field(..., ge=0, alias="predictedOccupiedSpaces")

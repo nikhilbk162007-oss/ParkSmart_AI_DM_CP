@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from app.main import app
 from app.repositories.dependencies import get_parking_repository
@@ -18,6 +19,7 @@ def client(mock_parking_repo):
     a real or live MongoDB server.
     """
     app.dependency_overrides[get_parking_repository] = lambda: mock_parking_repo
-    with TestClient(app) as test_client:
-        yield test_client
+    with patch("app.db.mongodb.MongoDBClient.connect"):
+        with TestClient(app) as test_client:
+            yield test_client
     app.dependency_overrides.clear()

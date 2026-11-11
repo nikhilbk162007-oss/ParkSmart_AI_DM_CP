@@ -1,11 +1,7 @@
 import { parkingFixtures } from "../data/parkingFixtures.js";
-
-export class ParkingResultsError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ParkingResultsError";
-  }
-}
+import { backendApiAdapter } from "./backendApiAdapter.js";
+import { ParkingResultsError } from "./parkingResultsError.js";
+export { ParkingResultsError } from "./parkingResultsError.js";
 
 function validateApiResults(results) {
   if (!Array.isArray(results)) {
@@ -71,13 +67,8 @@ export async function getParkingResults(criteria, { signal, apiAdapter } = {}) {
     );
   }
 
-  if (!apiAdapter) {
-    throw new ParkingResultsError(
-      "API mode is selected, but the backend contract is not configured. Confirm the endpoint, HTTP method, request schema, and response schema before connecting an API adapter. No request was sent.",
-    );
-  }
-
-  const results = validateApiResults(await apiAdapter(criteria, { baseUrl, signal }));
+  const adapter = apiAdapter || backendApiAdapter;
+  const results = validateApiResults(await adapter(criteria, { baseUrl, signal }));
 
   if (signal?.aborted) {
     throw new DOMException("The search was cancelled.", "AbortError");

@@ -82,6 +82,8 @@ function ParkingCard({ parking, mode, isSelected, onSelect, hasRecommendedOption
   const recommendationStatus = textValue(option.recommendationStatus);
   const recommendationExplanation = textValue(option.recommendationExplanation);
   const isRecommended = isRecommendedStatus(option.recommendationStatus);
+  const isFull = typeof option.recommendationStatus === "string" &&
+    option.recommendationStatus.trim().toLowerCase() === "full at arrival";
   const isAlternative = hasRecommendedOption && !isRecommended;
   const hasPrediction =
     option.predictedFreeSpaces !== null && option.predictedFreeSpaces !== undefined;
@@ -103,7 +105,7 @@ function ParkingCard({ parking, mode, isSelected, onSelect, hasRecommendedOption
 
   return (
     <article
-      className={`parking-card${isSelected ? " is-selected" : ""}${isRecommended ? " is-recommended" : ""}`}
+      className={`parking-card${isSelected ? " is-selected" : ""}${isRecommended ? " is-recommended" : ""}${isFull ? " is-full" : ""}`}
     >
       <div className="parking-card-heading">
         <div className="parking-card-icon" aria-hidden="true">

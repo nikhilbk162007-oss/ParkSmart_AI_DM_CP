@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+import asyncio
 from typing import Optional, Dict, Any
 import hashlib
 import logging
@@ -107,9 +108,10 @@ class ModuleMLAdapter(BaseMLAdapter):
 
         try:
             # Call agreed function signature
-            raw_result = predict_fn(
+            raw_result = await asyncio.to_thread(
+                predict_fn,
                 parking_data={"id": parking_id, "totalCapacity": total_capacity},
-                target_time=target_time
+                target_time=target_time,
             )
             # Validate output types and clamp within capacity bounds
             occupied = int(raw_result.get("predictedOccupiedSpaces", raw_result.get("occupied", 0)))

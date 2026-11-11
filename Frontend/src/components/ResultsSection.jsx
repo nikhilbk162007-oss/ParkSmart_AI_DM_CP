@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ParkingCard from "./ParkingCard.jsx";
 import ParkingMap from "./ParkingMap.jsx";
 
@@ -18,10 +18,18 @@ function isValidSpaceCount(value) {
 }
 
 function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
-  const [sortBy, setSortBy] = useState("distance");
+  const hasRecommendedOption = results.some(
+    (parking) =>
+      typeof parking.recommendationStatus === "string" &&
+      parking.recommendationStatus.trim().toLowerCase() === "recommended",
+  );
+  const [sortBy, setSortBy] = useState(hasRecommendedOption ? "recommended" : "distance");
   const [maxDistance, setMaxDistance] = useState("");
   const [minPredictedFreeSpaces, setMinPredictedFreeSpaces] = useState("");
   const [selectedParkingId, setSelectedParkingId] = useState(null);
+  useEffect(() => {
+    setSortBy(hasRecommendedOption ? "recommended" : "distance");
+  }, [criteria.destination, criteria.arrivalTime, hasRecommendedOption]);
 
   const filteredResults = useMemo(() => {
     const filtered = results.filter((parking) => {
@@ -37,6 +45,9 @@ function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
       return withinDistance && meetsAvailability;
     });
 
+    if (sortBy === "recommended") {
+      return filtered;
+    }
     return filtered.sort((first, second) => {
       if (sortBy === "predicted-free") {
         const firstHasCount = isValidSpaceCount(first.predictedFreeSpaces);
@@ -60,11 +71,7 @@ function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
   )
     ? selectedParkingId
     : null;
-  const hasRecommendedOption = results.some(
-    (parking) =>
-      typeof parking.recommendationStatus === "string" &&
-      parking.recommendationStatus.trim().toLowerCase() === "recommended",
-  );
+  const activeFilters = maxDistance !== "" || minPredictedFreeSpaces !== "";
 
   return (
     <section className="results-section" aria-labelledby="results-title">
@@ -120,6 +127,7 @@ function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
             <label className="result-control">
               <span>Sort by</span>
               <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                {hasRecommendedOption && <option value="recommended">Recommended order</option>}
                 <option value="distance">Reported distance</option>
                 <option value="predicted-free">Predicted free spaces</option>
               </select>
@@ -149,6 +157,11 @@ function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
               />
             </label>
           </div>
+          {activeFilters && filteredResults.length < results.length && (
+            <p className="filter-hidden-hint" aria-live="polite">
+              {results.length - filteredResults.length} hidden by filters
+            </p>
+          )}
 
           {filteredResults.length > 0 ? (
             <>

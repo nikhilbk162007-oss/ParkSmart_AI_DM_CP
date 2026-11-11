@@ -77,6 +77,8 @@ Training requires `scikit-learn`; saving the fitted model requires `joblib`.
 These runtime dependencies are declared in `pyproject.toml`. The package
 requires Python 3.11 or later and constrains scikit-learn to the 1.8 release
 series to match the existing model artifact's recorded scikit-learn version.
+After any scikit-learn version upgrade, retrain and evaluate the artifact with
+`python -m ml_model.training` before using it for inference.
 Tests require `pytest`, which is not an ML package runtime dependency.
 
 For backend development, the backend requirements should include

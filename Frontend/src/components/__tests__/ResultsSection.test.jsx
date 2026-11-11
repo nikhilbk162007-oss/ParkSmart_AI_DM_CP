@@ -51,6 +51,15 @@ describe("ResultsSection", () => {
     ]);
   });
 
+  it("preserves backend recommendation order by default", () => {
+    renderResults([
+      { id: "recommended", name: "Recommended farther", distanceKm: 4, recommendationStatus: "Recommended" },
+      { id: "alternative", name: "Alternative closer", distanceKm: 0.2, recommendationStatus: "Alternative option" },
+    ]);
+    expect(screen.getByLabelText("Sort by")).toHaveValue("recommended");
+    expect(getParkingNames()).toEqual(["Recommended farther", "Alternative closer"]);
+  });
+
   it("sorts valid numeric values before malformed optional values", async () => {
     const user = renderResults([
       { id: "bad-distance", name: "Invalid distance", distanceKm: -2, predictedFreeSpaces: "8" },
@@ -70,6 +79,7 @@ describe("ResultsSection", () => {
     const user = renderResults();
 
     await user.type(screen.getByLabelText("Maximum reported distance (km)"), "1");
+    expect(screen.getByText("2 hidden by filters")).toBeInTheDocument();
     expect(
       screen.getAllByRole("article").map((card) => within(card).getByRole("heading").textContent),
     ).toEqual(["Riverfront Parking House"]);
@@ -86,7 +96,7 @@ describe("ResultsSection", () => {
 
     await user.type(screen.getByLabelText("Minimum predicted free spaces"), "9999");
 
-    expect(screen.getByRole("status")).toHaveTextContent("No options match these filters");
+    expect(screen.getByRole("heading", { name: "No options match these filters" })).toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 

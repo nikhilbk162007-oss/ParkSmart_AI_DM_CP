@@ -65,6 +65,6 @@ describe("SearchPanel validation", () => {
       destination: "Central Library",
       arrivalTime: "2026-10-25T10:30",
     });
-    expect(screen.getByText(/parking recommendations have not been retrieved/i)).toBeInTheDocument();
+    expect(screen.getByText("Search ready for Central Library.")).toBeInTheDocument();
   });
 });

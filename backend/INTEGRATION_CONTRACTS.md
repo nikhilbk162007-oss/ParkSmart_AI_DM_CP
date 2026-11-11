@@ -47,6 +47,10 @@ The model must return occupancy estimates bounded by capacity:
 3. `occupancyPercentage == (predictedOccupiedSpaces / totalCapacity) * 100`
 4. Never return unrounded or negative counts.
 
+Naive arrival times are interpreted in the backend `APP_TIMEZONE` (default
+`Asia/Kolkata`) before invoking an ML adapter. An explicit offset continues to
+identify the same absolute instant.
+
 ---
 
 ## 2. Discrete Mathematics Recommendation Engine (PRD 4)
@@ -112,3 +116,12 @@ The engine returns ordered candidates with recommendation status and explanation
 - `"Recommended"` (assigned to the top candidate)
 - `"Alternative option"` (assigned to viable secondary alternatives)
 - `"Preview option"` (optional demonstration status)
+- `"Full at arrival"` (no predicted free spaces; never recommended)
+
+The standard ranking score is normalized:
+`0.6 * (predicted_free_spaces / total_capacity) + 0.4 * (1 / (1 + route_distance_km))`.
+The weights can be overridden by request constraints and are normalized to sum
+to one. Exact ties are broken by option ID. The route distance is computed on
+a sparse k-nearest-neighbour graph, with haversine edge lengths multiplied by
+the documented `1.3` road-detour factor. Unrecognized destinations use the
+candidate-set centre, and the explanation discloses that reference.

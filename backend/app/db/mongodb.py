@@ -34,6 +34,14 @@ class MongoDBClient:
                 settings.MONGODB_URI,
                 str(e)
             )
+            failed_client = self._client
+            self._client = None
+            self._db = None
+            if failed_client is not None:
+                try:
+                    failed_client.close()
+                except Exception as close_error:
+                    logger.error("Error closing failed MongoDB client: %s", close_error)
 
     def disconnect(self) -> None:
         """Cleanly close PyMongo client connections."""

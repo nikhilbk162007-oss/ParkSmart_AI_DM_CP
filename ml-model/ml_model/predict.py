@@ -1,6 +1,7 @@
 """Backend-compatible occupancy predictions from the trained synthetic model."""
 
 import math
+from functools import lru_cache
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,9 +73,7 @@ def _validate_request(
     return total_capacity, parsed_time
 
 
-def _load_model(artifact_path: Optional[Path] = None) -> Any:
-    if artifact_path is None:
-        artifact_path = ARTIFACT_PATH
+def _load_model_uncached(artifact_path: Path) -> Any:
     if not artifact_path.is_file():
         raise PredictionError(
             "Random Forest model artifact was not found at {}".format(artifact_path)
@@ -146,6 +145,20 @@ def _load_model(artifact_path: Optional[Path] = None) -> Any:
             )
         )
     return model
+
+
+@lru_cache(maxsize=8)
+def _load_model_cached(path: str, mtime_ns: int) -> Any:
+    return _load_model_uncached(Path(path))
+
+
+def _load_model(artifact_path: Optional[Path] = None) -> Any:
+    path = (artifact_path or ARTIFACT_PATH).resolve()
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        return _load_model_uncached(path)
+    return _load_model_cached(str(path), mtime_ns)
 
 
 def predict_occupancy(

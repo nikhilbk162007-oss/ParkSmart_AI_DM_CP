@@ -5,6 +5,7 @@ from app.services.parking_service import ParkingService
 from app.services.dependencies import get_parking_service
 from app.adapters.ml_adapter import get_ml_adapter
 from app.core.config import settings
+from app.core.timeutils import normalize_target_time
 
 router = APIRouter(prefix="/api/predictions", tags=["Predictions"])
 
@@ -25,6 +26,7 @@ async def get_prediction(
     (never inventing a prediction and presenting it as a real model output).
     """
     parking = parking_service.get_by_id(parking_id)
+    target_time = normalize_target_time(target_time)
     capacity = parking.get("totalCapacity", 0)
     
     ml_adapter = get_ml_adapter(settings.ML_ADAPTER_MODE)

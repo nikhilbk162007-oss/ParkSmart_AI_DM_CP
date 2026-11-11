@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+import asyncio
 from typing import List, Dict, Any, Optional
 import math
 import logging
@@ -12,6 +13,19 @@ from app.integrations.recommendation_contract import (
 )
 from app.core.errors import IntegrationUnavailableError
 from app.core.config import settings
+
+try:
+    from recommendation_engine.dijkstra import (
+        AVAILABILITY_WEIGHT,
+        PROXIMITY_WEIGHT,
+        calculate_route_distances,
+        resolve_destination,
+    )
+except ImportError:
+    AVAILABILITY_WEIGHT = 0.6
+    PROXIMITY_WEIGHT = 0.4
+    calculate_route_distances = None
+    resolve_destination = None
 
 logger = logging.getLogger("parksmart.adapters.recommendation")
 
@@ -43,17 +57,6 @@ def haversine_distance(coord1: List[float], coord2: List[float]) -> float:
     return round(R * c, 1)
 
 
-PUNE_DESTINATION_WAYPOINTS = {
-    "riverfront": [18.5204, 73.8567],
-    "market": [18.5314, 73.8446],
-    "garden": [18.5074, 73.8077],
-    "pune": [18.5204, 73.8567],
-    "deccan": [18.5173, 73.8415],
-    "shivajinagar": [18.5314, 73.8446],
-    "kothrud": [18.5074, 73.8077]
-}
-
-
 class MockRecommendationAdapter(BaseRecommendationAdapter):
     """
     Mock baseline adapter applying multi-criteria scoring for demonstration.
@@ -69,21 +72,30 @@ class MockRecommendationAdapter(BaseRecommendationAdapter):
         if not candidates:
             return []
 
-        dest_lower = destination.lower()
-        ref_coord = [18.5204, 73.8567]
-        for key, coord in PUNE_DESTINATION_WAYPOINTS.items():
-            if key in dest_lower:
-                ref_coord = coord
-                break
+        if resolve_destination is not None:
+            resolved_coord, destination_resolved = resolve_destination(destination)
+            ref_coord = list(resolved_coord)
+        else:
+            ref_coord, destination_resolved = [18.5204, 73.8567], False
+        if not destination_resolved:
+            coords_list = [c.get("coordinates") for c in candidates if c.get("coordinates")]
+            if coords_list:
+                ref_coord = [
+                    sum(coord[axis] for coord in coords_list) / len(coords_list)
+                    for axis in (0, 1)
+                ]
+
+        if calculate_route_distances is not None:
+            ref_coord, destination_resolved, route_distances = calculate_route_distances(
+                destination, candidates
+            )
+        else:
+            route_distances = []
 
         options = []
-        for cand in candidates:
+        for index, cand in enumerate(candidates):
             coords = cand.get("coordinates", [18.5204, 73.8567])
-            dist = cand.get("distanceKm")
-            if dist is None:
-                dist = haversine_distance(coords, ref_coord)
-                if dist == 0.0:
-                    dist = 0.5
+            dist = route_distances[index] if route_distances else haversine_distance(coords, ref_coord)
 
             cap = cand.get("totalCapacity", 100)
             occupied = cand.get("predictedOccupiedSpaces", 0)
@@ -96,6 +108,7 @@ class MockRecommendationAdapter(BaseRecommendationAdapter):
                 "predicted_occupied_spaces": occupied,
                 "predicted_free_spaces": free,
                 "distance_km": float(dist),
+                "scoring_distance_km": float(dist),
                 "coordinates": coords,
                 "coordinate_source": cand.get("coordinateSource", "simulated-development"),
                 "data_source": cand.get("dataSource", "simulated-development"),
@@ -104,17 +117,20 @@ class MockRecommendationAdapter(BaseRecommendationAdapter):
         # Baseline demo scoring
         def score_option(opt):
             cap = opt["total_capacity"] or 1
-            avail_ratio = opt["predicted_free_spaces"] / cap
-            dist_score = 1.0 / (opt["distance_km"] + 0.5)
-            return (avail_ratio * 60) + (dist_score * 40)
+            avail_ratio = opt["predicted_free_spaces"] / cap if cap else 0
+            proximity = 1.0 / (1.0 + opt["scoring_distance_km"])
+            return (AVAILABILITY_WEIGHT * avail_ratio) + (PROXIMITY_WEIGHT * proximity)
 
-        options.sort(key=score_option, reverse=True)
+        options.sort(key=lambda opt: (opt["predicted_free_spaces"] == 0, -score_option(opt), opt["id"]))
 
         results: List[ParkingOption] = []
         for i, opt in enumerate(options):
-            if i == 0:
+            if opt["predicted_free_spaces"] == 0:
+                status = "Full at arrival"
+                explanation = f"No predicted spaces are free; {opt['distance_km']} km from destination."
+            elif not any(result.recommendation_status == "Recommended" for result in results):
                 status = "Recommended"
-                explanation = f"Optimal balance: {opt['predicted_free_spaces']} spaces free and {opt['distance_km']} km away"
+                explanation = f"Weighted availability/proximity score: {opt['predicted_free_spaces']} spaces free and {opt['distance_km']} km away"
             elif i <= 2:
                 status = "Alternative option"
                 explanation = f"Secondary alternative with {opt['predicted_free_spaces']} estimated available spaces"
@@ -122,13 +138,15 @@ class MockRecommendationAdapter(BaseRecommendationAdapter):
                 status = "Alternative option"
                 explanation = f"Located {opt['distance_km']} km from destination"
 
+            if not destination_resolved:
+                explanation += f" Destination not recognised; distances are measured from candidate-set centre ({ref_coord[0]:.4f}, {ref_coord[1]:.4f})."
             results.append(ParkingOption(
                 id=opt["id"],
                 name=opt["name"],
                 total_capacity=opt["total_capacity"],
                 predicted_occupied_spaces=opt["predicted_occupied_spaces"],
                 predicted_free_spaces=opt["predicted_free_spaces"],
-                distance_km=opt["distance_km"],
+                distance_km=round(opt["distance_km"], 1),
                 coordinates=opt["coordinates"],
                 coordinate_source=opt["coordinate_source"],
                 data_source=opt["data_source"],
@@ -169,7 +187,7 @@ class ModuleRecommendationAdapter(BaseRecommendationAdapter):
                 arrival_time=target_time,
                 candidates=[ParkingCandidateInput(**c) for c in candidates]
             )
-            raw_response = rank_fn(req.model_dump(by_alias=True))
+            raw_response = await asyncio.to_thread(rank_fn, req.model_dump(by_alias=True))
             # Validate output is a list of options
             if isinstance(raw_response, dict) and "rankedOptions" in raw_response:
                 return [ParkingOption(**item) for item in raw_response["rankedOptions"]]

@@ -41,12 +41,17 @@ Validate bounds and rounding. If predictions are percentages, document the conve
 1. Receive parking candidates and target time.
 2. Obtain predicted occupancy.
 3. Calculate estimated free spaces.
-4. Filter candidates that fail constraints, such as no predicted free spaces or exceeding maximum distance.
+4. Filter candidates that fail hard constraints, such as exceeding maximum distance. Keep full lots as clearly labelled last-resort options.
 5. Calculate route distances.
-6. Rank candidates using an agreed rule—for example, availability first and distance as a tie-breaker, or a documented weighted score.
+6. Rank candidates using a normalized weighted score: `0.6 * (free / capacity) + 0.4 * (1 / (1 + route_distance_km))`. Weights can be overridden by request constraints and are normalized to sum to one. Exact ties use stable option ID order.
 7. Return ranked options with reasons.
 
 Do not use arbitrary ranking weights without documenting their meaning.
+
+The route graph is a sparse k-nearest-neighbour graph, with each edge weighted
+by haversine distance multiplied by a documented road-detour factor of 1.3.
+Dijkstra uses a heap-based frontier. Unknown destinations use the centre of the
+candidate set as a disclosed reference point; they are not silently geocoded.
 
 ## Discrete Mathematics Concepts
 - Graphs, vertices, edges, and weighted graphs.

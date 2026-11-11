@@ -120,7 +120,7 @@ function ParkingMarker({ parking, markerNumber, isSelected, onSelect, mode }) {
 }
 
 function ParkingMap({ results, mode, selectedParkingId, onSelect }) {
-  const [tileError, setTileError] = useState(false);
+  const [tileErrors, setTileErrors] = useState(0);
   const mappedParking = useMemo(
     () => results.filter((parking) => isIndiaCoordinatePair(parking.coordinates)),
     [results],
@@ -128,7 +128,7 @@ function ParkingMap({ results, mode, selectedParkingId, onSelect }) {
   const selectedParking = mappedParking.find((parking) => parking.id === selectedParkingId);
 
   useEffect(() => {
-    setTileError(false);
+    setTileErrors(0);
   }, [mappedParking]);
 
   return (
@@ -157,7 +157,7 @@ function ParkingMap({ results, mode, selectedParkingId, onSelect }) {
               : "No valid coordinates were provided with these parking results."}
           </span>
         </div>
-      ) : tileError ? (
+      ) : tileErrors > 5 ? (
         <div className="parking-map-fallback" role="alert">
           <strong>Map tiles could not be displayed</strong>
           <span>
@@ -178,7 +178,10 @@ function ParkingMap({ results, mode, selectedParkingId, onSelect }) {
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              eventHandlers={{ tileerror: () => setTileError(true) }}
+              eventHandlers={{
+                tileerror: () => setTileErrors((count) => count + 1),
+                tileload: () => setTileErrors(0),
+              }}
             />
             <MapViewController selectedParking={selectedParking} />
             {mappedParking.map((parking, index) => (

@@ -49,8 +49,17 @@ export function Popup({ children }) {
   return <div data-testid="parking-map-popup">{children}</div>;
 }
 
-export function TileLayer() {
-  return null;
+export function TileLayer({ eventHandlers }) {
+  return (
+    <div>
+      <button type="button" data-testid="mock-tile-error" onClick={() => eventHandlers?.tileerror?.()}>
+        Simulate tile error
+      </button>
+      <button type="button" data-testid="mock-tile-load" onClick={() => eventHandlers?.tileload?.()}>
+        Simulate tile load
+      </button>
+    </div>
+  );
 }
 
 export function useMap() {

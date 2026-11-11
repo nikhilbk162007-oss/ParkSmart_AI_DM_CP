@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Clock3, MapPin, Search } from "lucide-react";
 
-function SearchPanel({ onSearch }) {
+function SearchPanel({ onSearch, searchStatus }) {
   const [destination, setDestination] = useState("");
   const [arrivalTime, setArrivalTime] = useState("");
   const [errors, setErrors] = useState({});
@@ -106,18 +106,17 @@ function SearchPanel({ onSearch }) {
       </button>
       {capturedCriteria ? (
         <p className="search-status search-success" role="status" aria-live="polite">
-          Search criteria captured for <strong>{capturedCriteria.destination}</strong> at{" "}
-          <strong>
-            {new Date(capturedCriteria.arrivalTime).toLocaleString(undefined, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          </strong>
-          . Parking recommendations have not been retrieved.
+          {searchStatus === "loading"
+            ? `Searching for ${capturedCriteria.destination}…`
+            : searchStatus === "success"
+              ? `Showing results for ${capturedCriteria.destination}.`
+              : searchStatus === "error"
+                ? `Could not load results for ${capturedCriteria.destination}.`
+                : `Search ready for ${capturedCriteria.destination}.`}
         </p>
       ) : (
         <p className="search-status" aria-live="polite">
-          Your criteria will be captured here; recommendations are not connected yet.
+          Enter a destination and arrival time to search.
         </p>
       )}
     </form>

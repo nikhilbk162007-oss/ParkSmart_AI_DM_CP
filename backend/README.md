@@ -190,7 +190,7 @@ Consumes the Frontend search form criteria (`destination` and `arrivalTime`) and
     "coordinateSource": "simulated-development",
     "dataSource": "simulated-development",
     "recommendationStatus": "Recommended",
-    "recommendationExplanation": "Optimal balance: 134 spaces free and 0.7 km away"
+    "recommendationExplanation": "Weighted availability/proximity score: 134 spaces free and 0.7 km away"
   },
   {
     "id": "fixture-market",
@@ -247,6 +247,12 @@ runtime dependencies.
 cp .env.example .env
 ```
 
+Important settings include `APP_TIMEZONE=Asia/Kolkata`,
+`ML_ADAPTER_MODE`/`REC_ADAPTER_MODE` (`mock`, `module`, or `http`),
+`ML_SERVICE_URL`, `ML_TIMEOUT_SECONDS`, `REC_SERVICE_URL`, and
+`REC_TIMEOUT_SECONDS`. See `.env.example` for the full list and safe local
+defaults.
+
 ### 3. Run Database Index Migration
 ```bash
 python -m scripts.init_indexes
@@ -267,4 +273,19 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 pytest -v
 ```
-All 26 automated unit and integration tests run deterministically via dependency-injected test repositories without requiring a live MongoDB server.
+The automated unit and integration tests run deterministically via
+dependency-injected repositories and mocked Mongo lifecycle, without requiring
+a live MongoDB server.
+
+## Recommendation and time behaviour
+
+The mock and module rankers use the same normalized score:
+`0.6 * (free / capacity) + 0.4 * (1 / (1 + route_distance_km))`.
+Destination resolution uses whole-place matches. Unknown destinations use the
+candidate-set centre as a clearly disclosed reference, not a fabricated
+geocode. Naive arrival times are interpreted in `APP_TIMEZONE` (default
+`Asia/Kolkata`); offset-aware timestamps preserve their represented instant.
+
+API mode is wired to `POST /api/recommendations`. Configure the frontend with
+`VITE_PARKING_DATA_MODE=api` and
+`VITE_API_BASE_URL=http://localhost:8000`.

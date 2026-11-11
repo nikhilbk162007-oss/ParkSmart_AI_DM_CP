@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from app.repositories.parking_repository import ParkingRepository
 from app.models.parking import ParkingFacility
 from app.schemas.parking import ParkingCreate, ParkingUpdate
-from app.core.errors import EntityNotFoundError
+from app.core.errors import BadRequestError, EntityNotFoundError
 
 
 class ParkingService:
@@ -28,7 +28,15 @@ class ParkingService:
         return self.repository.create(facility)
 
     def update(self, parking_id: str, payload: ParkingUpdate) -> Dict[str, Any]:
+        existing = self.repository.get_by_id(parking_id)
+        if not existing:
+            raise EntityNotFoundError("Parking facility", parking_id)
         updates = payload.model_dump(exclude_unset=True, by_alias=True)
+        merged = {**existing, **updates}
+        try:
+            ParkingFacility(**merged)
+        except ValueError as exc:
+            raise BadRequestError(f"Parking update violates facility constraints: {exc}") from exc
         return self.repository.update(parking_id, updates)
 
     def delete(self, parking_id: str) -> bool:

@@ -1,4 +1,3 @@
-import os
 import json
 from typing import List, Union
 from pydantic import Field, field_validator
@@ -12,6 +11,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     ENVIRONMENT: str = "development"
+    APP_TIMEZONE: str = "Asia/Kolkata"
     
     # CORS Origins: in production defaults to empty or specific domain;
     # allows local frontend dev when configured.

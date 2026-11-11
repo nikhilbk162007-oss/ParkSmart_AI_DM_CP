@@ -138,4 +138,16 @@ describe("ParkingCard", () => {
     expect(screen.getAllByText("Not provided")).toHaveLength(6);
     expect(screen.queryByText(/illustrative fixture text/i)).not.toBeInTheDocument();
   });
+
+  it("renders full-at-arrival status without treating the option as recommended", () => {
+    render(
+      <ParkingCard
+        parking={{ id: "full", name: "Full Garage", recommendationStatus: "Full at arrival" }}
+        mode="api"
+      />,
+    );
+    expect(screen.getByText("Full at arrival")).toBeInTheDocument();
+    expect(screen.getByRole("article")).toHaveClass("is-full");
+    expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
+  });
 });

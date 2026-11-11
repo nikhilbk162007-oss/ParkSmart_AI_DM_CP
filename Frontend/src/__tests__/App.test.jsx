@@ -66,27 +66,62 @@ describe("App search results", () => {
     expect(screen.queryByRole("heading", { name: "Parking options" })).not.toBeInTheDocument();
   });
 
-  it("reports the missing API contract without making network requests", async () => {
+  it("submits API searches to the backend and renders returned options", async () => {
     vi.stubEnv("VITE_PARKING_DATA_MODE", "api");
-    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
-    const fetchMock = vi.fn();
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test///");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        id: "api-garage",
+        name: "API Garage",
+        totalCapacity: 100,
+        predictedOccupiedSpaces: 30,
+        predictedFreeSpaces: 70,
+        distanceKm: 0.5,
+        coordinates: [18.52, 73.85],
+        recommendationStatus: "Recommended",
+        recommendationExplanation: "Closest available option.",
+      }],
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<App />);
 
     await submitValidSearch(user);
 
-    expect(
-      await screen.findByText(/backend contract is not configured/i),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "API Garage" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/recommendations",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.destination).toBe("Central Library");
+    expect(requestBody.arrivalTime).toMatch(/Z$/);
+  });
 
+  it("shows a backend 503 message and retries API searches", async () => {
+    vi.stubEnv("VITE_PARKING_DATA_MODE", "api");
+    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: "Database unavailable." } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "retry", name: "Retry Garage" }],
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await submitValidSearch(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable.");
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => {
-      expect(screen.getByText(/backend contract is not configured/i)).toBeInTheDocument();
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Retry Garage" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("does not let an older search overwrite a newer result", async () => {
@@ -121,5 +156,22 @@ describe("App search results", () => {
         screen.queryByRole("heading", { level: 3, name: "Stale search result" }),
       ).not.toBeInTheDocument();
     });
+  });
+
+  it("resets filters when a new search is submitted", async () => {
+    vi.stubEnv("VITE_PARKING_DATA_MODE", "demo");
+    const user = userEvent.setup();
+    render(<App />);
+    await submitValidSearch(user);
+    expect(await screen.findByRole("heading", { name: "Parking options" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Minimum predicted free spaces"), "9999");
+    expect(screen.getByText("3 hidden by filters")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("YOUR DESTINATION"));
+    await user.type(screen.getByLabelText("YOUR DESTINATION"), "New Destination");
+    await user.clear(screen.getByLabelText("ARRIVAL TIME"));
+    await user.type(screen.getByLabelText("ARRIVAL TIME"), "2026-10-25T12:30");
+    await user.click(screen.getByRole("button", { name: "Find parking" }));
+    expect(await screen.findByRole("heading", { level: 3, name: "Riverfront Parking House" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum predicted free spaces")).toHaveValue(null);
   });
 });

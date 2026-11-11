@@ -540,9 +540,14 @@ class TestPredictionsAPI:
         assert "predictedFreeSpaces" not in data
 
     def test_ml_http_unavailable_returns_503(self, client: TestClient):
+        import httpx
         with (
             patch.object(settings, "ML_ADAPTER_MODE", "http"),
             patch.object(settings, "ML_SERVICE_URL", "http://127.0.0.1:59998"),
+            patch(
+                "httpx.AsyncClient.post",
+                side_effect=httpx.ConnectError("connection refused"),
+            ),
         ):
             res = client.get(
                 f"/api/predictions/{VALID_FIXTURE_ID}?target_time=2026-10-25T12:00:00"
@@ -727,8 +732,19 @@ class TestErrorResponseStructure:
         assert 'File "' not in text
 
     def test_no_traceback_in_503_response(self, client: TestClient):
-        with patch.object(settings, "ML_ADAPTER_MODE", "module"):
+        real_import_module = importlib.import_module
+
+        def import_module(name, package=None):
+            if name == "ml_model.predict":
+                raise ModuleNotFoundError("test module unavailable", name=name)
+            return real_import_module(name, package)
+
+        with (
+            patch.object(settings, "ML_ADAPTER_MODE", "module"),
+            patch("importlib.import_module", side_effect=import_module),
+        ):
             res = client.get(f"/api/predictions/{VALID_FIXTURE_ID}")
+        assert res.status_code == 503
         text = res.text
         assert "Traceback" not in text
 
@@ -852,6 +868,8 @@ class TestMongoDBClientLifecycle:
                 client_obj.connect()
             except Exception as e:
                 pytest.fail(f"connect() raised unexpectedly: {e}")
+        assert client_obj.db is None
+        assert client_obj.client is None
 
 
 # ===========================================================================

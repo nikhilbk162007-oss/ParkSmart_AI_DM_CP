@@ -78,6 +78,34 @@ async def test_module_ml_adapter_when_unconfigured_raises_integration_error():
 
 
 @pytest.mark.asyncio
+async def test_module_ml_adapter_runs_prediction_in_worker_thread():
+    import importlib
+    import threading
+    from types import SimpleNamespace
+
+    caller_thread = threading.get_ident()
+    worker_threads = []
+
+    def predict_occupancy(**_kwargs):
+        worker_threads.append(threading.get_ident())
+        return {"predictedOccupiedSpaces": 40, "modelSource": "test-model"}
+
+    real_import_module = importlib.import_module
+
+    def import_module(name, package=None):
+        if name == "ml_model.predict":
+            return SimpleNamespace(predict_occupancy=predict_occupancy)
+        return real_import_module(name, package)
+
+    with patch("importlib.import_module", side_effect=import_module):
+        result = await ModuleMLAdapter().predict_occupancy(
+            "lot-1", 100, datetime.now(timezone.utc)
+        )
+    assert result.predicted_occupied_spaces == 40
+    assert worker_threads and worker_threads[0] != caller_thread
+
+
+@pytest.mark.asyncio
 async def test_http_ml_adapter_connection_failure():
     """HTTP adapter with unreachable host raises IntegrationUnavailableError."""
     adapter = HttpMLAdapter(service_url="http://127.0.0.1:59999", timeout=0.2)
@@ -122,6 +150,47 @@ async def test_mock_recommendation_adapter_empty_candidates():
         candidates=[]
     )
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_mock_and_module_recommendation_modes_use_same_order_and_route_distances():
+    candidates = [
+        {
+            "id": "far-more-available",
+            "name": "Far Garage",
+            "totalCapacity": 100,
+            "coordinates": [18.5500, 73.9000],
+            "predictedOccupiedSpaces": 20,
+            "predictedFreeSpaces": 80,
+        },
+        {
+            "id": "near",
+            "name": "Near Garage",
+            "totalCapacity": 100,
+            "coordinates": [18.5173, 73.8415],
+            "predictedOccupiedSpaces": 30,
+            "predictedFreeSpaces": 70,
+        },
+        {
+            "id": "second-near",
+            "name": "Second Near Garage",
+            "totalCapacity": 100,
+            "coordinates": [18.5200, 73.8400],
+            "predictedOccupiedSpaces": 30,
+            "predictedFreeSpaces": 70,
+        },
+    ]
+    target_time = datetime(2026, 10, 25, 14, 30, tzinfo=timezone.utc)
+    mock_results = await MockRecommendationAdapter().rank_parking_options(
+        "Deccan, Pune", target_time, candidates
+    )
+    module_results = await ModuleRecommendationAdapter().rank_parking_options(
+        "Deccan, Pune", target_time, candidates
+    )
+    assert [option.id for option in mock_results] == [option.id for option in module_results]
+    assert [option.distance_km for option in mock_results] == [
+        option.distance_km for option in module_results
+    ]
 
 
 @pytest.mark.asyncio

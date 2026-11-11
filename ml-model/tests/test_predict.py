@@ -242,3 +242,27 @@ def test_artifact_loader_rejects_incompatible_feature_count(tmp_path, monkeypatc
 
     with pytest.raises(predict.PredictionError, match="expects"):
         predict._load_model()
+
+
+def test_model_loader_caches_by_path_and_mtime(tmp_path, monkeypatch):
+    artifact = tmp_path / "model.joblib"
+    artifact.write_bytes(b"artifact")
+    loads = []
+    model = object()
+
+    def fake_load(path):
+        loads.append(path)
+        return model
+
+    monkeypatch.setattr(predict, "_load_model_uncached", fake_load)
+    predict._load_model_cached.cache_clear()
+    assert predict._load_model(artifact) is model
+    assert predict._load_model(artifact) is model
+    assert len(loads) == 1
+
+    import os
+    stat = artifact.stat()
+    os.utime(artifact, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+    assert predict._load_model(artifact) is model
+    assert len(loads) == 2
+    predict._load_model_cached.cache_clear()

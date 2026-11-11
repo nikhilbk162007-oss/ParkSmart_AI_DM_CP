@@ -136,12 +136,13 @@ function App() {
               Tell us where you’re headed and when. ParkSmart AI is being built to help you find a
               parking option that fits your plans.
             </p>
-            <SearchPanel onSearch={handleSearch} />
+            <SearchPanel onSearch={handleSearch} searchStatus={search?.status} />
           </div>
           <ParkingIllustration />
         </section>
         {search && (
           <ResultsSection
+            key={`${search.criteria.destination}|${search.criteria.arrivalTime}`}
             criteria={search.criteria}
             mode={search.mode}
             status={search.status}

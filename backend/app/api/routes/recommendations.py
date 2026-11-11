@@ -6,6 +6,11 @@ from app.services.dependencies import get_parking_service
 from app.adapters.ml_adapter import get_ml_adapter
 from app.adapters.recommendation_adapter import get_recommendation_adapter
 from app.core.config import settings
+from app.core.timeutils import normalize_target_time
+import asyncio
+import logging
+
+logger = logging.getLogger("parksmart.api.recommendations")
 
 router = APIRouter(prefix="/api/recommendations", tags=["Recommendations"])
 
@@ -30,24 +35,32 @@ async def get_recommendations(
     ml_adapter = get_ml_adapter(settings.ML_ADAPTER_MODE)
     rec_adapter = get_recommendation_adapter(settings.REC_ADAPTER_MODE)
 
-    candidates = []
-    for lot in parking_lots:
+    target_time = normalize_target_time(req.arrival_time)
+
+    async def predict_candidate(lot):
         lot_id = lot.get("id")
         cap = lot.get("totalCapacity", 0)
-        
-        # 1. Obtain prediction for this candidate from ML adapter
-        pred = await ml_adapter.predict_occupancy(lot_id, cap, req.arrival_time)
-        
+        try:
+            pred = await ml_adapter.predict_occupancy(lot_id, cap, target_time)
+        except Exception as exc:
+            logger.warning("Excluding parking candidate %s because prediction failed: %s", lot_id, exc)
+            return None
         candidate = dict(lot)
         candidate["predictedOccupiedSpaces"] = pred.predicted_occupied_spaces
         candidate["predictedFreeSpaces"] = pred.predicted_free_spaces
         candidate["occupancyPercentage"] = pred.occupancy_percentage
-        candidates.append(candidate)
+        return candidate
+
+    prediction_results = await asyncio.gather(*(predict_candidate(lot) for lot in parking_lots))
+    candidates = [candidate for candidate in prediction_results if candidate is not None]
+    if not candidates:
+        from app.core.errors import IntegrationUnavailableError
+        raise IntegrationUnavailableError("ML Model", "All parking occupancy predictions failed.")
 
     # 2. Delegate ranking to recommendation adapter (Dijkstra / multi-criteria scoring)
     ranked_options = await rec_adapter.rank_parking_options(
         destination=req.destination,
-        target_time=req.arrival_time,
+        target_time=target_time,
         candidates=candidates
     )
 

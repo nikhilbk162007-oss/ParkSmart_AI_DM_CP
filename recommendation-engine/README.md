@@ -11,11 +11,24 @@ This module implements the PRD 4 recommendation engine for ParkSmart AI.
 
 ## Ranking rule
 
-The engine uses the following deterministic score:
+The engine uses the following deterministic normalized score:
 
-score = (predicted_free_spaces * 10) - distance_km
+score = 0.6 * (predicted_free_spaces / total_capacity) + 0.4 * (1 / (1 + route_distance_km))
 
-This keeps available parking as the primary decision factor and uses route distance as a tie-breaker. Higher score wins. The rule is documented and not arbitrary.
+Weights are configurable via the request constraints `availabilityWeight` and
+`proximityWeight`; they are normalized to sum to one. The defaults prioritize
+availability while still accounting for proximity. Exact score ties are broken
+by the stable option ID.
+
+Destination lookups use whole-phrase matches for known Pune places. Unrecognized
+destinations use the candidate-set centre as a clearly disclosed reference;
+they are never silently geocoded to central Pune. Sparse k-nearest-neighbour
+graphs use Dijkstra shortest paths with haversine edge lengths multiplied by
+`ROAD_DETOUR_FACTOR=1.3`.
+
+Facilities with no predicted availability remain in the output, last, with the
+status `Full at arrival`. All coordinates and predictions retain their data
+provenance; the engine does not create live data.
 
 ## Example usage
 
@@ -39,7 +52,7 @@ request = {
 }
 
 result = rank_parking_candidates(request)
-print(result["rankedOptions"]) 
+print(result["rankedOptions"])
 ```
 
 ## Install

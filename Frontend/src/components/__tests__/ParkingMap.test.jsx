@@ -93,6 +93,30 @@ describe("ParkingMap", () => {
     expect(screen.queryByTestId("leaflet-map")).not.toBeInTheDocument();
   });
 
+  it("keeps the map visible through five tile errors and resets on tile load", async () => {
+    const user = userEvent.setup();
+    render(
+      <ParkingMap
+        results={parkingFixtures}
+        mode="api"
+        selectedParkingId={null}
+        onSelect={() => {}}
+      />,
+    );
+    const tileError = screen.getByTestId("mock-tile-error");
+    for (let index = 0; index < 5; index += 1) {
+      await user.click(tileError);
+    }
+    expect(screen.getByTestId("leaflet-map")).toBeInTheDocument();
+    await user.click(screen.getByTestId("mock-tile-load"));
+    await user.click(tileError);
+    expect(screen.getByTestId("leaflet-map")).toBeInTheDocument();
+    for (let index = 0; index < 5; index += 1) {
+      await user.click(tileError);
+    }
+    expect(screen.getByRole("alert")).toHaveTextContent("Map tiles could not be displayed");
+  });
+
   it.each([
     [[51.5, -0.1], true],
     [[-90, 180], true],

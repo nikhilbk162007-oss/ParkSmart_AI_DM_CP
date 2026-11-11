@@ -93,13 +93,13 @@ def register_error_handlers(app: FastAPI) -> None:
             })
 
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             content={
                 "error": {
                     "type": "validation_error",
                     "message": "Input validation failed. Please check the submitted fields.",
                     "details": formatted_errors,
-                    "status_code": status.HTTP_422_UNPROCESSABLE_ENTITY
+                    "status_code": 422
                 }
             }
         )

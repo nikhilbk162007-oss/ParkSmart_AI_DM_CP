@@ -1,219 +1,270 @@
 from __future__ import annotations
 
+import heapq
 import math
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+import re
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-DESTINATION_CLUES = {
+AVAILABILITY_WEIGHT = 0.6
+PROXIMITY_WEIGHT = 0.4
+ROAD_DETOUR_FACTOR = 1.3
+GRAPH_NEIGHBORS = 3
+DEFAULT_REFERENCE = (18.5204, 73.8567)
+
+DESTINATION_WAYPOINTS: Dict[str, Tuple[float, float]] = {
     "riverfront": (18.5204, 73.8567),
-    "market": (18.5314, 73.8446),
-    "garden": (18.5074, 73.8077),
+    "market street": (18.5314, 73.8446),
+    "garden district": (18.5074, 73.8077),
+    "garden road": (18.5074, 73.8077),
     "deccan": (18.5173, 73.8415),
     "shivajinagar": (18.5314, 73.8446),
     "kothrud": (18.5074, 73.8077),
-    "pune": (18.5204, 73.8567),
+    "pune": DEFAULT_REFERENCE,
 }
 
 
-def _normalize_coordinates(value: Any, fallback: Tuple[float, float]) -> Tuple[float, float]:
-    if isinstance(value, (list, tuple)) and len(value) >= 2:
-        lat, lon = value[0], value[1]
-        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-            return float(lat), float(lon)
-    return fallback
-
-
-def _haversine_km(coord_a: Tuple[float, float], coord_b: Tuple[float, float]) -> float:
+def _haversine_km(coord_a: Sequence[float], coord_b: Sequence[float]) -> float:
     lat1, lon1 = coord_a
     lat2, lon2 = coord_b
-    radius_km = 6371.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
-
-    segment = (
+    value = (
         math.sin(delta_phi / 2.0) ** 2
         + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
     )
-    return radius_km * (2.0 * math.atan2(math.sqrt(segment), math.sqrt(1.0 - segment)))
+    return 6371.0 * 2.0 * math.atan2(math.sqrt(value), math.sqrt(1.0 - value))
 
 
-def _graph_from_destination(destination: str, candidates: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:
-    search_key = (destination or "").strip().lower()
-    fallback_destination = (18.5204, 73.8567)
-    for clue, coord in DESTINATION_CLUES.items():
-        if clue in search_key:
-            fallback_destination = coord
-            break
-    candidate_list = list(candidates)
-    nodes = {"destination": fallback_destination}
-    for candidate in candidate_list:
-        candidate_id = str(candidate.get("id") or "unknown")
-        coords = _normalize_coordinates(candidate.get("coordinates"), fallback_destination)
-        nodes[candidate_id] = coords
+def _normalize_coordinates(value: Any, fallback: Sequence[float]) -> Tuple[float, float]:
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(isinstance(part, (int, float)) and math.isfinite(part) for part in value)
+    ):
+        return float(value[0]), float(value[1])
+    return float(fallback[0]), float(fallback[1])
 
-    graph: Dict[str, Dict[str, float]] = {node: {} for node in nodes}
-    node_ids = list(nodes)
-    for index, source in enumerate(node_ids):
-        for target in node_ids[index + 1:]:
-            distance = _haversine_km(nodes[source], nodes[target])
-            if distance <= 0:
-                distance = 0.1
-            graph[source][target] = distance
-            graph[target][source] = distance
-    return graph
+
+def resolve_destination(text: str) -> Tuple[Tuple[float, float], bool]:
+    """Resolve known Pune destination names using whole-phrase word boundaries."""
+    normalized = (text or "").strip().lower()
+    for phrase, coordinates in sorted(DESTINATION_WAYPOINTS.items(), key=lambda item: -len(item[0])):
+        if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", normalized):
+            return coordinates, True
+    return DEFAULT_REFERENCE, False
 
 
 def _dijkstra(graph: Mapping[str, Mapping[str, float]], start: str) -> Dict[str, float]:
-    distances: Dict[str, float] = {node: math.inf for node in graph}
+    distances = {node: math.inf for node in graph}
     distances[start] = 0.0
-    visited: set[str] = set()
     frontier: List[Tuple[float, str]] = [(0.0, start)]
-
     while frontier:
-        current_distance, current_node = min(frontier, key=lambda item: item[0])
-        frontier.remove((current_distance, current_node))
-        if current_node in visited:
+        distance, node = heapq.heappop(frontier)
+        if distance != distances[node]:
             continue
-        visited.add(current_node)
-
-        for neighbor, weight in graph.get(current_node, {}).items():
-            tentative = current_distance + weight
-            if tentative < distances.get(neighbor, math.inf):
-                distances[neighbor] = tentative
-                frontier.append((tentative, neighbor))
-
+        for neighbor, weight in graph[node].items():
+            candidate = distance + weight
+            if candidate < distances.get(neighbor, math.inf):
+                distances[neighbor] = candidate
+                heapq.heappush(frontier, (candidate, neighbor))
     return distances
 
 
-def _compute_free_spaces(candidate: Mapping[str, Any], fallback_capacity: Optional[int] = None) -> Optional[int]:
-    total_capacity = candidate.get("totalCapacity")
-    if total_capacity is None:
-        total_capacity = candidate.get("total_capacity")
-    if total_capacity is None:
-        total_capacity = fallback_capacity
-    if total_capacity is None:
-        return None
-    try:
-        total_capacity = int(total_capacity)
-    except (TypeError, ValueError):
-        return None
-    if total_capacity < 0:
-        return None
+def _candidate_center(candidates: Sequence[Mapping[str, Any]]) -> Tuple[float, float]:
+    points = [
+        _normalize_coordinates(candidate.get("coordinates"), DEFAULT_REFERENCE)
+        for candidate in candidates
+    ]
+    if not points:
+        return DEFAULT_REFERENCE
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
 
-    free = candidate.get("predictedFreeSpaces")
-    if free is None:
-        free = candidate.get("predicted_free_spaces")
+
+def _build_sparse_graph(
+    destination: Sequence[float],
+    candidates: Sequence[Mapping[str, Any]],
+    neighbor_count: int,
+) -> Tuple[Dict[str, Dict[str, float]], List[str]]:
+    candidate_nodes = [f"candidate:{index}" for index in range(len(candidates))]
+    node_ids = ["destination", *candidate_nodes]
+    points = [tuple(destination)] + [
+        _normalize_coordinates(candidate.get("coordinates"), destination)
+        for candidate in candidates
+    ]
+    graph: Dict[str, Dict[str, float]] = {node: {} for node in node_ids}
+    if len(points) < 2:
+        return graph, candidate_nodes
+
+    # SciPy's spatial index is available with the project's scikit-learn dependency.
+    # A linear fallback keeps the engine usable in minimal installations.
+    try:
+        from scipy.spatial import cKDTree
+
+        tree_points = [
+            (point[0], point[1] * math.cos(math.radians(point[0])))
+            for point in points
+        ]
+        _, neighbors = cKDTree(tree_points).query(
+            tree_points, k=min(len(points), max(2, neighbor_count + 1))
+        )
+        neighbor_rows = neighbors.tolist()
+    except ImportError:
+        neighbor_rows = []
+        for index, point in enumerate(points):
+            ordered = sorted(
+                (other for other in range(len(points)) if other != index),
+                key=lambda other: _haversine_km(point, points[other]),
+            )
+            neighbor_rows.append([index, *ordered[:neighbor_count]])
+
+    def connect(first: int, second: int) -> None:
+        if first == second:
+            return
+        weight = _haversine_km(points[first], points[second]) * ROAD_DETOUR_FACTOR
+        graph[node_ids[first]][node_ids[second]] = weight
+        graph[node_ids[second]][node_ids[first]] = weight
+
+    for index, row in enumerate(neighbor_rows):
+        selected = [int(item) for item in row if int(item) != index][:neighbor_count]
+        for neighbor in selected:
+            connect(index, neighbor)
+
+    # A longitude-ordered spanning chain guarantees connectivity without a dense graph.
+    ordered_nodes = sorted(range(1, len(points)), key=lambda index: (points[index][1], points[index][0], index))
+    chain = [0, *ordered_nodes]
+    for first, second in zip(chain, chain[1:]):
+        connect(first, second)
+    return graph, candidate_nodes
+
+
+def calculate_route_distances(
+    destination_text: str,
+    candidates: Sequence[Mapping[str, Any]],
+    neighbor_count: int = GRAPH_NEIGHBORS,
+) -> Tuple[Tuple[float, float], bool, List[float]]:
+    resolved_coordinates, resolved = resolve_destination(destination_text)
+    reference = resolved_coordinates if resolved else _candidate_center(candidates)
+    graph, candidate_nodes = _build_sparse_graph(reference, candidates, neighbor_count)
+    distances = _dijkstra(graph, "destination")
+    route_distances = []
+    for index, candidate in enumerate(candidates):
+        coordinate = _normalize_coordinates(candidate.get("coordinates"), reference)
+        route_distance = distances.get(candidate_nodes[index], math.inf)
+        if not math.isfinite(route_distance):
+            route_distance = _haversine_km(reference, coordinate) * ROAD_DETOUR_FACTOR
+        route_distances.append(route_distance)
+    return reference, resolved, route_distances
+
+
+def _candidate_free_spaces(candidate: Mapping[str, Any]) -> Optional[int]:
+    capacity = candidate.get("totalCapacity", candidate.get("total_capacity"))
+    occupied = candidate.get("predictedOccupiedSpaces", candidate.get("predicted_occupied_spaces"))
+    free = candidate.get("predictedFreeSpaces", candidate.get("predicted_free_spaces"))
+    if type(capacity) is not int or capacity < 0:
+        return None
     if free is not None:
-        try:
-            free = int(free)
-        except (TypeError, ValueError):
+        if type(free) is not int or free < 0 or free > capacity:
             return None
-        if free < 0 or free > total_capacity:
+        if occupied is not None and (type(occupied) is not int or occupied + free != capacity):
             return None
         return free
-
-    occupied = candidate.get("predictedOccupiedSpaces")
-    if occupied is None:
-        occupied = candidate.get("predicted_occupied_spaces")
-    if occupied is None:
+    if type(occupied) is not int or occupied < 0 or occupied > capacity:
         return None
+    return capacity - occupied
+
+
+def _weight(constraints: Optional[Mapping[str, Any]], key: str, default: float) -> float:
     try:
-        occupied = int(occupied)
+        value = float((constraints or {}).get(key, default))
     except (TypeError, ValueError):
-        return None
-
-    if occupied < 0 or occupied > total_capacity:
-        return None
-    return total_capacity - occupied
-
-
-def _constraint_distance(constraints: Optional[Mapping[str, Any]]) -> Optional[float]:
-    if not constraints:
-        return None
-    raw = constraints.get("maxWalkingDistanceKm")
-    if raw is None:
-        raw = constraints.get("max_walking_distance_km")
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return max(0.0, value)
+        return default
+    return value if math.isfinite(value) and 0 <= value <= 1 else default
 
 
 def rank_parking_candidates(request: Mapping[str, Any]) -> Dict[str, Any]:
-    """Rank parking candidates using a documented availability-first, distance-second rule.
-
-    The algorithm computes shortest paths with Dijkstra's algorithm on a weighted graph whose
-    edges use route-distance approximations. The ranking score is formally:
-        score = (predicted_free_spaces * 10) - distance_km
-    Higher scores are preferred. This keeps availability as the primary decision factor and
-    uses distance as a secondary tie-breaker, which matches the PRD 4 requirements.
-    """
-    destination = str(request.get("destination") or "Pune")
+    """Rank by a weighted 0-1 availability/proximity score after Dijkstra routing."""
+    destination_text = str(request.get("destination") or "")
     candidates = list(request.get("candidates") or [])
     constraints = request.get("constraints")
-
     if not candidates:
-        return {"rankedOptions": [], "algorithm": "dijkstra-multi-criteria", "engineSource": "graph-engine-v1"}
-
-    graph = _graph_from_destination(destination, candidates)
-    route_distances = _dijkstra(graph, "destination")
-    max_walk_distance = _constraint_distance(constraints)
-
-    ranked: List[Dict[str, Any]] = []
-    for candidate in candidates:
-        candidate_id = str(candidate.get("id") or "unknown")
-        route_distance = route_distances.get(candidate_id, math.inf)
-        if not math.isfinite(route_distance):
-            route_distance = _haversine_km(
-                _normalize_coordinates(candidate.get("coordinates"), (18.5204, 73.8567)),
-                DESTINATION_CLUES.get((destination or "").strip().lower(), (18.5204, 73.8567)),
-            )
-
-        if max_walk_distance is not None and route_distance > max_walk_distance:
-            continue
-
-        free_spaces = _compute_free_spaces(candidate)
-        if free_spaces is None or free_spaces <= 0:
-            continue
-
-        option = {
-            "id": str(candidate.get("id")),
-            "name": str(candidate.get("name") or f"Parking {candidate_id}"),
-            "totalCapacity": int(candidate.get("totalCapacity") or candidate.get("total_capacity") or 0),
-            "predictedOccupiedSpaces": int(candidate.get("predictedOccupiedSpaces") or candidate.get("predicted_occupied_spaces") or 0),
-            "predictedFreeSpaces": free_spaces,
-            "distanceKm": round(route_distance, 1),
-            "coordinates": list(candidate.get("coordinates") or [18.5204, 73.8567]),
-            "coordinateSource": candidate.get("coordinateSource") or candidate.get("coordinate_source") or "simulated-development",
-            "dataSource": candidate.get("dataSource") or candidate.get("data_source") or "simulated-development",
+        _, resolved = resolve_destination(destination_text)
+        return {
+            "rankedOptions": [],
+            "algorithm": "dijkstra-multi-criteria",
+            "engineSource": "graph-engine-v1",
+            "routingMetadata": {"destinationResolved": resolved},
         }
-        score = (free_spaces * 10.0) - route_distance
-        ranked.append({"candidate": option, "score": score})
 
-    ranked.sort(key=lambda item: item["score"], reverse=True)
+    availability_weight = _weight(constraints, "availabilityWeight", AVAILABILITY_WEIGHT)
+    proximity_weight = _weight(constraints, "proximityWeight", PROXIMITY_WEIGHT)
+    weight_total = availability_weight + proximity_weight
+    if weight_total == 0:
+        availability_weight, proximity_weight = AVAILABILITY_WEIGHT, PROXIMITY_WEIGHT
+        weight_total = availability_weight + proximity_weight
+    availability_weight /= weight_total
+    proximity_weight /= weight_total
+    try:
+        neighbors = int((constraints or {}).get("graphNeighbors", GRAPH_NEIGHBORS))
+    except (TypeError, ValueError):
+        neighbors = GRAPH_NEIGHBORS
+    neighbors = max(1, min(neighbors, 12))
 
-    ranked_options: List[Dict[str, Any]] = []
-    for index, item in enumerate(ranked):
-        candidate = item["candidate"]
-        status = "Recommended" if index == 0 else "Alternative option"
+    reference, resolved, route_distances = calculate_route_distances(
+        destination_text, candidates, neighbors
+    )
+    ranked = []
+    max_distance = (constraints or {}).get("maxWalkingDistanceKm")
+    try:
+        max_distance = float(max_distance) if max_distance is not None else None
+    except (TypeError, ValueError):
+        max_distance = None
+    for index, candidate in enumerate(candidates):
+        capacity = candidate.get("totalCapacity", candidate.get("total_capacity"))
+        free = _candidate_free_spaces(candidate)
+        if free is None or type(capacity) is not int:
+            continue
+        coordinate = _normalize_coordinates(candidate.get("coordinates"), reference)
+        route_distance = route_distances[index]
+        if max_distance is not None and route_distance > max_distance:
+            continue
+        availability = free / capacity if capacity else 0.0
+        proximity = 1.0 / (1.0 + route_distance)
+        score = availability_weight * availability + proximity_weight * proximity
+        output = {
+            "id": str(candidate.get("id", "")),
+            "name": str(candidate.get("name") or f"Parking {candidate.get('id', '')}"),
+            "totalCapacity": capacity,
+            "predictedOccupiedSpaces": capacity - free,
+            "predictedFreeSpaces": free,
+            "distanceKm": round(route_distance, 1),
+            "coordinates": list(coordinate),
+            "coordinateSource": candidate.get("coordinateSource", candidate.get("coordinate_source", "simulated-development")),
+            "dataSource": candidate.get("dataSource", candidate.get("data_source", "simulated-development")),
+        }
+        ranked.append((score, output))
+
+    ranked.sort(key=lambda item: (item[1]["predictedFreeSpaces"] == 0, -item[0], item[1]["id"]))
+    ranked_options = []
+    for _, option in ranked:
+        if option["predictedFreeSpaces"] == 0:
+            status = "Full at arrival"
+        elif not any(item["predictedFreeSpaces"] > 0 for item in ranked_options):
+            status = "Recommended"
+        else:
+            status = "Alternative option"
         explanation = (
-            f"Availability-first ranking: {candidate['predictedFreeSpaces']} spaces free and "
-            f"{candidate['distanceKm']} km from destination."
+            f"Weighted score: {availability_weight:.1f} availability and "
+            f"{proximity_weight:.1f} proximity; {option['predictedFreeSpaces']} spaces free "
+            f"and {option['distanceKm']} km from destination."
         )
+        if not resolved:
+            explanation += f" Destination not recognised; distances are measured from candidate-set centre ({reference[0]:.4f}, {reference[1]:.4f})."
         ranked_options.append({
-            "id": candidate["id"],
-            "name": candidate["name"],
-            "totalCapacity": candidate["totalCapacity"],
-            "predictedOccupiedSpaces": candidate["predictedOccupiedSpaces"],
-            "predictedFreeSpaces": candidate["predictedFreeSpaces"],
-            "distanceKm": candidate["distanceKm"],
-            "coordinates": candidate["coordinates"],
-            "coordinateSource": candidate["coordinateSource"],
-            "dataSource": candidate["dataSource"],
+            **option,
             "recommendationStatus": status,
             "recommendationExplanation": explanation,
         })
@@ -223,8 +274,9 @@ def rank_parking_candidates(request: Mapping[str, Any]) -> Dict[str, Any]:
         "algorithm": "dijkstra-multi-criteria",
         "engineSource": "graph-engine-v1",
         "routingMetadata": {
-            "graphNodeCount": len(graph),
-            "distanceRule": "availability-first, distance-second",
-            "scoreFormula": "(predicted_free_spaces * 10) - distance_km",
+            "graphNodeCount": len(candidates) + 1,
+            "destinationResolved": resolved,
+            "distanceRule": "Dijkstra shortest path on a sparse k-nearest-neighbour graph; haversine edge weights multiplied by ROAD_DETOUR_FACTOR",
+            "scoreFormula": f"{availability_weight:.1f} * (predicted_free_spaces / total_capacity) + {proximity_weight:.1f} * (1 / (1 + route_distance_km))",
         },
     }

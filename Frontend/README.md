@@ -2,7 +2,8 @@
 
 Responsive React + Vite frontend for ParkSmart AI. It provides destination and arrival-time
 selection, parking-result comparison, sorting and filters, and an India-constrained Leaflet map.
-The recommendation provider stays behind an adapter boundary until the backend contract is agreed.
+The recommendation provider uses an adapter boundary and sends API-mode searches
+to the confirmed backend `POST /api/recommendations` contract.
 
 ## Prerequisites
 
@@ -43,7 +44,8 @@ Run tests in watch mode during development:
 npm run test:watch
 ```
 
-Tests use Vitest, jsdom, and React Testing Library. They use simulated fixtures and isolated API-adapter test values; no tests make real network requests. API-mode tests verify that an unconfigured backend contract prevents network calls.
+Tests use Vitest, jsdom, and React Testing Library. They use simulated fixtures
+and mocked API responses; no tests make real network requests.
 
 ## Environment variables
 
@@ -56,16 +58,24 @@ VITE_API_BASE_URL=
 
 - `VITE_PARKING_DATA_MODE` accepts `demo` or `api` and defaults to `demo`.
 - Demo mode reads only the simulated development fixtures.
-- API mode reads `VITE_API_BASE_URL`, but does not send a request until a backend contract and API adapter are provided. It displays a clear error and retry control instead of guessing an endpoint or payload.
+- API mode posts to `${VITE_API_BASE_URL}/api/recommendations` with an ISO-8601 absolute arrival timestamp. Backend error messages and retry are supported.
 - Vite environment variables are included in the browser bundle. Do not put private API keys or secrets in `.env` variables prefixed with `VITE_`.
 
-Before API mode can make requests, the backend team must confirm the contract described below. The adapter passed to `getParkingResults` must map that confirmed contract to the frontend result model. No backend API availability is assumed. Adapter results are checked for object records with unique IDs; malformed records are surfaced as an error rather than silently dropped or replaced with demo data.
+The default API adapter implements the agreed backend contract. Tests and other
+consumers can inject a custom adapter. Adapter results are checked for object
+records with unique IDs; malformed records are surfaced as an error rather than
+silently dropped or replaced with demo data.
 
-## Integration contract needed
+## Remaining integration details
 
-- **Set B — backend:** confirmed base URL, search endpoint and HTTP method; destination and arrival-time request fields and timezone rules; success/error response formats; stable unique parking-option ID; coordinate representation; distance field meaning and units; capacity fields; pagination if applicable; and the authentication/CORS approach. The frontend currently expects the adapter to return an array of records with a unique `id`. Existing optional display fields are `name`, `totalCapacity`, `predictedOccupiedSpaces`, `predictedFreeSpaces`, `distanceKm`, `coordinates` (`[latitude, longitude]`), `recommendationStatus`, and `recommendationExplanation`. The adapter should map the confirmed API schema to these fields or the frontend model must be deliberately updated with the team.
+The backend base URL, search endpoint, HTTP method, destination and arrival-time
+request fields, and direct-array response shape are implemented. The frontend
+expects each result to have a stable unique `id`; optional display fields are
+`name`, `totalCapacity`, `predictedOccupiedSpaces`, `predictedFreeSpaces`,
+`distanceKm`, `coordinates` (`[latitude, longitude]`), `recommendationStatus`,
+and `recommendationExplanation`.
 - **Set C — predictions:** definitions and units for occupied/free counts; whether the figures are predictions or current observations; prediction horizon and timestamp; treatment of stale or unavailable predictions; and any confidence/limitation metadata that should be shown. The UI labels occupancy as predicted and explicitly distinguishes it from current occupancy; current occupancy is not displayed because no agreed field or definition exists.
-- **Set D — recommendations and routes:** the authoritative way to identify a recommended option (the current UI recognizes `recommendationStatus: "Recommended"`), the ranking/alternative semantics, and the explanation field/content. Also provide route-distance, duration, and route-detail/geometry field names, units, and meanings. No route is calculated or inferred from `distanceKm`; route information is not shown until these fields are agreed.
+- **Set D — recommendations and routes:** recommendation status, ranking, and explanations are implemented. Route duration and route geometry/details are not currently returned; no route is inferred by the frontend from `distanceKm`.
 
 Sample, predicted, and live information must be distinguishable in the confirmed response contract, including provenance and relevant timestamps. The frontend does not claim live availability.
 
@@ -80,7 +90,8 @@ Sample, predicted, and live information must be distinguishable in the confirmed
 - `src/__tests__/App.test.jsx` — app-level demo and API-mode flow tests
 - `src/test/setup.js` — Testing Library matchers, cleanup, and jsdom map mocks
 - `src/data/parkingFixtures.js` — explicitly simulated development-only parking examples
-- `src/services/parkingResultsProvider.js` — provider that selects demo fixtures or a contract-gated API adapter
+- `src/services/parkingResultsProvider.js` — provider that selects demo fixtures or the backend API adapter
+- `src/services/backendApiAdapter.js` — `POST /api/recommendations` adapter
 - `src/services/__tests__/parkingResultsProvider.test.js` — adapter validation, empty results, and failure behavior
 - `src/index.css` — design tokens, layout, responsive rules, and focus styles
 - `src/main.jsx` — React application entry point
@@ -93,4 +104,7 @@ After valid submission, demo mode displays simulated development fixtures on the
 
 OpenStreetMap tiles are used as the map background and require an internet connection. If map tiles fail, a fallback message is shown while the parking result list remains usable.
 
-API requests, current-occupancy display, and route display remain blocked pending the contracts above. ML prediction and recommendation algorithms are implemented by Sets C and D, not this frontend.
+Current-occupancy display and route geometry remain blocked pending those data
+contracts. Naive browser arrival times are converted to absolute instants before
+submission. ML prediction and recommendation algorithms are implemented by
+Sets C and D, not this frontend.

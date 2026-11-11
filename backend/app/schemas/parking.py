@@ -80,6 +80,24 @@ class ParkingUpdate(BaseModel):
                 raise ValueError("Coordinates must be valid [lat, lon]")
         return v
 
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "ParkingUpdate":
+        required_when_supplied = (
+            "name",
+            "total_capacity",
+            "coordinates",
+            "coordinate_source",
+            "data_source",
+            "is_simulated",
+            "metadata",
+        )
+        for field_name in required_when_supplied:
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        if self.name is not None and not self.name.strip():
+            raise ValueError("Parking facility name cannot be empty or whitespace")
+        return self
+
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
@@ -97,6 +115,7 @@ class ParkingBaseResponse(BaseModel):
     is_simulated: bool = Field(default=True, alias="isSimulated")
     address: Optional[str] = None
     current_occupancy: Optional[CurrentOccupancyMeasured] = Field(default=None, alias="currentOccupancy")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = Field(default=None, alias="createdAt")
     updated_at: Optional[datetime] = Field(default=None, alias="updatedAt")
 

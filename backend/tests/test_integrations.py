@@ -126,14 +126,34 @@ async def test_mock_recommendation_adapter_empty_candidates():
 
 @pytest.mark.asyncio
 async def test_module_recommendation_adapter_unconfigured_raises_error():
-    """Uninstalled recommendation module raises IntegrationUnavailableError."""
+    """When the recommendation module import fails, adapter raises IntegrationUnavailableError."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def import_module(name, package=None):
+        if name == "recommendation_engine.dijkstra":
+            raise ModuleNotFoundError(
+                "No module named 'recommendation_engine.dijkstra'",
+                name="recommendation_engine.dijkstra",
+            )
+        return real_import_module(name, package)
+
     adapter = ModuleRecommendationAdapter()
-    with pytest.raises(IntegrationUnavailableError) as exc_info:
-        await adapter.rank_parking_options(
-            destination="Pune",
-            target_time=datetime.now(timezone.utc),
-            candidates=[{"id": "lot-1", "totalCapacity": 100}]
-        )
+    with patch("importlib.import_module", side_effect=import_module):
+        with pytest.raises(IntegrationUnavailableError) as exc_info:
+            await adapter.rank_parking_options(
+                destination="Pune",
+                target_time=datetime.now(timezone.utc),
+                candidates=[{
+                    "id": "lot-1",
+                    "name": "Lot 1",
+                    "totalCapacity": 100,
+                    "coordinates": [18.5204, 73.8567],
+                    "predictedOccupiedSpaces": 40,
+                    "predictedFreeSpaces": 60,
+                }]
+            )
     assert "Recommendation Engine" in str(exc_info.value)
     assert "not installed" in str(exc_info.value)
 

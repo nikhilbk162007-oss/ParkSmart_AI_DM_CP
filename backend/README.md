@@ -238,8 +238,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 Run the installation command from the `backend/` directory. Its requirements
-include the local editable `ml-model` package, so this also installs the ML
-package and its declared runtime dependencies.
+include the local editable `ml-model` and `recommendation-engine` packages, so
+this also installs the ML model and the PRD 4 recommendation engine with their
+runtime dependencies.
 
 ### 2. Configure Environment
 ```bash

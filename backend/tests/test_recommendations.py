@@ -100,15 +100,28 @@ def test_get_recommendations_when_no_parking_available_returns_empty_list(client
 
 
 def test_get_recommendations_when_engine_unavailable_returns_503(client: TestClient):
-    """When REC_ADAPTER_MODE is 'module' and engine is unconfigured, return 503."""
+    """When the module import fails, the API returns a 503 instead of fabricated results."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def import_module(name, package=None):
+        if name == "recommendation_engine.dijkstra":
+            raise ModuleNotFoundError(
+                "No module named 'recommendation_engine.dijkstra'",
+                name="recommendation_engine.dijkstra",
+            )
+        return real_import_module(name, package)
+
     with patch.object(settings, "REC_ADAPTER_MODE", "module"):
-        payload = {
-            "destination": "Riverfront, Pune",
-            "arrivalTime": "2026-10-25T14:30:00"
-        }
-        response = client.post("/api/recommendations", json=payload)
-        assert response.status_code == 503
-        data = response.json()
-        assert "error" in data
-        assert data["error"]["type"] == "integration_unavailable"
-        assert "Recommendation Engine" in data["error"]["message"]
+        with patch("importlib.import_module", side_effect=import_module):
+            payload = {
+                "destination": "Riverfront, Pune",
+                "arrivalTime": "2026-10-25T14:30:00"
+            }
+            response = client.post("/api/recommendations", json=payload)
+    assert response.status_code == 503
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["type"] == "integration_unavailable"
+    assert "Recommendation Engine" in data["error"]["message"]

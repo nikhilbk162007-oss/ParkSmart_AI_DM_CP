@@ -628,12 +628,25 @@ class TestRecommendationsAPI:
     def test_rec_engine_unavailable_returns_503_not_fabricated_200(
         self, client: TestClient
     ):
-        """Recommendation engine missing → 503, never fabricated 200 list."""
+        """Recommendation engine import failure → 503, never fabricated 200 list."""
+        import importlib
+
+        real_import_module = importlib.import_module
+
+        def fake_import(name, package=None):
+            if name == "recommendation_engine.dijkstra":
+                raise ModuleNotFoundError(
+                    "No module named 'recommendation_engine.dijkstra'",
+                    name="recommendation_engine.dijkstra",
+                )
+            return real_import_module(name, package)
+
         with patch.object(settings, "REC_ADAPTER_MODE", "module"):
-            res = client.post("/api/recommendations", json={
-                "destination": "Pune",
-                "arrivalTime": "2026-10-25T14:30:00",
-            })
+            with patch("importlib.import_module", side_effect=fake_import):
+                res = client.post("/api/recommendations", json={
+                    "destination": "Pune",
+                    "arrivalTime": "2026-10-25T14:30:00",
+                })
         assert res.status_code == 503
         data = res.json()
         assert data["error"]["type"] == "integration_unavailable"

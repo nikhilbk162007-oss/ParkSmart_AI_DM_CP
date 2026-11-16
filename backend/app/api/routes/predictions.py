@@ -1,5 +1,6 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query
+from app.api.dependencies.auth import get_current_user
 from app.schemas.prediction import PredictionResponse
 from app.services.parking_service import ParkingService
 from app.services.dependencies import get_parking_service
@@ -17,6 +18,7 @@ async def get_prediction(
         default_factory=datetime.now,
         description="Target arrival timestamp in ISO-8601 format (e.g. 2026-10-25T14:30:00)"
     ),
+    current_user: dict = Depends(get_current_user),
     parking_service: ParkingService = Depends(get_parking_service)
 ):
     """

@@ -40,3 +40,6 @@ htmlcov/
 .DS_Store
 .vscode/*
 !.vscode/settings.json
+
+# Environment secrets
+backend/.env

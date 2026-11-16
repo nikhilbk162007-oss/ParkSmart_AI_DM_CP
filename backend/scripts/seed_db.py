@@ -2,7 +2,10 @@ import sys
 from pymongo import MongoClient
 from app.core.config import settings
 from app.db.indexes import ensure_parking_indexes
-from app.repositories.parking_repository import DEFAULT_PARKING_FIXTURES
+from app.repositories.parking_repository import (
+    DEFAULT_PARKING_FIXTURES,
+    LEGACY_SIMULATED_FIXTURE_IDS,
+)
 
 
 def seed_simulated_demonstration_data():
@@ -22,7 +25,7 @@ def seed_simulated_demonstration_data():
     print("PARKSMART AI: LOCAL DEMONSTRATION SEED UTILITY")
     print("NOTICE: All records are synthetic / simulated. Not for production.")
     print("=================================================================")
-    print(f"Connecting to MongoDB at: {settings.MONGODB_URI}")
+    print("Connecting to the configured MongoDB server.")
 
     client = MongoClient(
         settings.MONGODB_URI,
@@ -36,8 +39,14 @@ def seed_simulated_demonstration_data():
         print("Ensuring unique and query indexes...")
         ensure_parking_indexes(db)
 
-        # 2. Upsert synthetic fixtures idempotently
-        print(f"Upserting {len(DEFAULT_PARKING_FIXTURES)} simulated Pune parking demonstration fixtures...")
+        # Remove only the previous known simulated demo records.
+        db.parking.delete_many({
+            "id": {"$in": list(LEGACY_SIMULATED_FIXTURE_IDS)},
+            "isSimulated": True,
+        })
+
+        # Upsert the fixed fictional campus simulation facilities.
+        print(f"Upserting {len(DEFAULT_PARKING_FIXTURES)} simulated campus facilities...")
         for fixture in DEFAULT_PARKING_FIXTURES:
             db.parking.update_one(
                 {"id": fixture["id"]},
@@ -45,19 +54,29 @@ def seed_simulated_demonstration_data():
                 upsert=True
             )
 
-        print("✅ Local demonstration data seeded successfully:")
+        print("SUCCESS: Local demonstration data seeded successfully:")
         cursor = db.parking.find(
             {},
-            {"_id": 0, "id": 1, "name": 1, "totalCapacity": 1, "coordinates": 1, "isSimulated": 1}
+            {
+                "_id": 0,
+                "id": 1,
+                "name": 1,
+                "totalCapacity": 1,
+                "currentOccupancy": 1,
+                "acceptedVehicleTypes": 1,
+                "isSimulated": 1,
+            }
         )
         for doc in cursor:
             print(
                 f" - [{doc['id']}] {doc['name']} "
-                f"(Capacity: {doc['totalCapacity']}, Coordinates: {doc['coordinates']}, Simulated: {doc['isSimulated']})"
+                f"(Capacity: {doc['totalCapacity']}, "
+                f"Occupied: {doc.get('currentOccupancy', {}).get('occupiedSpaces')}, "
+                f"Simulated: {doc['isSimulated']})"
             )
 
     except Exception as e:
-        print(f"❌ Error connecting or seeding MongoDB: {e}")
+        print(f"ERROR: Connecting or seeding MongoDB failed ({type(e).__name__}).")
         print("Ensure local MongoDB is running, or verify your MONGODB_URI in .env.")
         sys.exit(1)
     finally:

@@ -4,13 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.errors import register_error_handlers
 from app.db.mongodb import mongodb_client
-from app.api.routes import health, parking, predictions, recommendations
+from app.db.indexes import ensure_parking_indexes
+from app.api.routes import auth, health, parking, predictions, recommendations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if len(settings.AUTH_JWT_SECRET.encode("utf-8")) < 32:
+        raise RuntimeError("AUTH_JWT_SECRET must be configured with at least 32 bytes before startup.")
     # Startup: connect to MongoDB
     mongodb_client.connect()
+    if mongodb_client.db is not None:
+        ensure_parking_indexes(mongodb_client.db)
     yield
     # Shutdown: clean up DB client connection
     mongodb_client.disconnect()
@@ -40,6 +45,7 @@ def create_app() -> FastAPI:
 
     # Include API Routers
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(parking.router)
     app.include_router(predictions.router)
     app.include_router(recommendations.router)

@@ -5,7 +5,17 @@ from recommendation_engine.dijkstra import (
     _dijkstra,
     rank_parking_candidates,
     resolve_destination,
+    shortest_path,
 )
+from recommendation_engine.campus_graph import (
+    CAMPUS_ROAD_EDGES,
+    CAMPUS_ROAD_GRAPH,
+    DESTINATIONS,
+    ENTRY_GATES,
+    NODE_LABELS,
+    PARKING_NODES,
+)
+from recommendation_engine.campus_recommendation import recommend_campus_parking
 
 
 def test_rank_parking_candidates_returns_ranked_options():
@@ -193,3 +203,169 @@ def test_destination_named_destination_and_duplicate_ids_keep_separate_nodes():
     })
     assert len(response["rankedOptions"]) == 3
     assert response["rankedOptions"][0]["distanceKm"] > 0
+
+
+def _campus_candidate(identifier, capacity, occupied, accepted):
+    return {
+        "id": identifier,
+        "name": NODE_LABELS[identifier],
+        "totalCapacity": capacity,
+        "acceptedVehicleTypes": accepted,
+        "isSimulated": True,
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": occupied,
+            "freeSpaces": capacity - occupied,
+            "vehicleCounts": {"car": occupied, "two-wheeler": 0}
+            if "two-wheeler" in accepted
+            else {"car": occupied},
+        },
+    }
+
+
+def test_campus_graph_edges_are_positive_and_undirected():
+    assert set(CAMPUS_ROAD_GRAPH) == set(NODE_LABELS)
+    for first, second, distance in CAMPUS_ROAD_EDGES:
+        assert distance > 0
+        assert CAMPUS_ROAD_GRAPH[first][second] == distance
+        assert CAMPUS_ROAD_GRAPH[second][first] == distance
+
+
+def test_dijkstra_reconstructs_known_campus_routes():
+    assert shortest_path(CAMPUS_ROAD_GRAPH, "gate_north", "P1") == (
+        170,
+        ["gate_north", "road_north", "P1"],
+    )
+    assert shortest_path(CAMPUS_ROAD_GRAPH, "P1", "dest_library") == (
+        390,
+        ["P1", "road_north", "road_central", "road_library", "dest_library"],
+    )
+    assert shortest_path(CAMPUS_ROAD_GRAPH, "gate_south", "P3") == (
+        145,
+        ["gate_south", "road_south", "P3"],
+    )
+
+
+def test_all_gates_can_reach_all_destinations_and_parking_nodes():
+    for gate in ENTRY_GATES.values():
+        for destination in DESTINATIONS.values():
+            distance, path = shortest_path(CAMPUS_ROAD_GRAPH, gate, destination)
+            assert distance is not None
+            assert path[0] == gate
+            assert path[-1] == destination
+        for parking in PARKING_NODES:
+            assert shortest_path(CAMPUS_ROAD_GRAPH, gate, parking)[0] is not None
+
+
+def test_shortest_path_reports_unreachable_and_rejects_invalid_nodes():
+    disconnected_graph = {"start": {}, "end": {}}
+    assert shortest_path(disconnected_graph, "start", "end") == (None, [])
+    for start, end in [("missing", "end"), ("start", "missing")]:
+        try:
+            shortest_path(disconnected_graph, start, end)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid graph node must be rejected")
+
+
+def test_campus_recommendations_filter_and_return_route_segments():
+    candidates = [
+        _campus_candidate("P1", 50, 15, ["car", "two-wheeler"]),
+        _campus_candidate("P2", 30, 18, ["car"]),
+        _campus_candidate("P3", 40, 35, ["car", "two-wheeler"]),
+        _campus_candidate("P4", 60, 60, ["car", "two-wheeler"]),
+    ]
+    response = recommend_campus_parking({
+        "destination": "Library",
+        "entryGate": "gate_north",
+        "vehicleType": "two-wheeler",
+        "candidates": candidates,
+    })
+    options = response["rankedOptions"]
+    assert {option["id"] for option in options} == {"P1", "P3"}
+    assert options[0]["id"] == "P1"
+    assert options[0]["routeDistanceMeters"] == 170
+    assert options[0]["walkingDistanceMeters"] == 390
+    assert options[0]["routePath"] == [
+        "gate_north",
+        "road_north",
+        "P1",
+        "road_north",
+        "road_central",
+        "road_library",
+        "dest_library",
+    ]
+    assert options[0]["recommendationStatus"] == "Recommended"
+    assert options[0]["recommendationReason"]
+
+
+def test_campus_recommendation_uses_live_simulated_occupancy_and_gate():
+    candidates = [
+        _campus_candidate("P1", 50, 15, ["car", "two-wheeler"]),
+        _campus_candidate("P3", 40, 35, ["car", "two-wheeler"]),
+    ]
+    first = recommend_campus_parking({
+        "destination": "Sports Complex",
+        "entryGate": "gate_south",
+        "vehicleType": "car",
+        "candidates": candidates,
+    })["rankedOptions"]
+    assert first[0]["entryGate"] == "gate_south"
+
+    candidates[0]["currentOccupancy"]["occupiedSpaces"] = 49
+    candidates[0]["currentOccupancy"]["freeSpaces"] = 1
+    candidates[0]["currentOccupancy"]["vehicleCounts"] = {"car": 49, "two-wheeler": 0}
+    changed = recommend_campus_parking({
+        "destination": "Sports Complex",
+        "entryGate": "gate_south",
+        "vehicleType": "car",
+        "candidates": candidates,
+    })["rankedOptions"]
+    assert changed[0]["id"] == "P3"
+
+
+def test_campus_recommendation_returns_empty_when_no_eligible_facilities():
+    candidates = [
+        _campus_candidate("P1", 50, 50, ["car", "two-wheeler"]),
+        _campus_candidate("P2", 30, 18, ["car"]),
+    ]
+    assert recommend_campus_parking({
+        "destination": "Canteen",
+        "entryGate": "gate_north",
+        "vehicleType": "two-wheeler",
+        "candidates": candidates,
+    })["rankedOptions"] == []
+
+
+def test_campus_recommendation_invalid_gate_or_destination_is_rejected():
+    base = {
+        "destination": "Library",
+        "entryGate": "gate_north",
+        "vehicleType": "car",
+        "candidates": [_campus_candidate("P1", 50, 15, ["car"])],
+    }
+    for key, value in [("entryGate", "gate_unknown"), ("destination", "Pune")]:
+        request = {**base, key: value}
+        try:
+            recommend_campus_parking(request)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Invalid {key} must be rejected")
+
+
+def test_campus_recommendation_breaks_exact_score_ties_by_stable_id():
+    candidates = [
+        _campus_candidate("P1", 3627, 2617, ["car"]),
+        _campus_candidate("P2", 3627, 2627, ["car"]),
+    ]
+    response = recommend_campus_parking({
+        "destination": "Library",
+        "entryGate": "gate_north",
+        "vehicleType": "car",
+        "candidates": candidates,
+    })
+    options = response["rankedOptions"]
+    assert options[0]["score"] == options[1]["score"]
+    assert [option["id"] for option in options] == ["P1", "P2"]

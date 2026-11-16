@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     REC_ADAPTER_MODE: str = "mock"
     REC_SERVICE_URL: str = "http://localhost:8002"
     REC_TIMEOUT_SECONDS: float = 3.0
+    AUTH_JWT_SECRET: str = ""
+    AUTH_TOKEN_TTL_MINUTES: int = Field(default=60, ge=1, le=1440)
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

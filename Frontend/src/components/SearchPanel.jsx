@@ -1,124 +1,68 @@
 import { useState } from "react";
-import { Clock3, MapPin, Search } from "lucide-react";
+import { ArrowRight, CarFront, MapPin, Signpost } from "lucide-react";
+
+const DESTINATIONS = [
+  ["Library", "Library"],
+  ["Academic Block", "Academic Block"],
+  ["Canteen", "Canteen"],
+  ["Auditorium", "Auditorium"],
+  ["Sports Complex", "Sports Complex"],
+];
 
 function SearchPanel({ onSearch, searchStatus }) {
-  const [destination, setDestination] = useState("");
-  const [arrivalTime, setArrivalTime] = useState("");
-  const [errors, setErrors] = useState({});
-  const [capturedCriteria, setCapturedCriteria] = useState(null);
+  const [destination, setDestination] = useState("Library");
+  const [entryGate, setEntryGate] = useState("gate_north");
+  const [vehicleType, setVehicleType] = useState("car");
 
   function handleSubmit(event) {
     event.preventDefault();
-
-    const nextErrors = {};
-    const trimmedDestination = destination.trim();
-
-    if (!trimmedDestination) {
-      nextErrors.destination = "Enter a destination to continue.";
-    }
-
-    if (!arrivalTime || Number.isNaN(new Date(arrivalTime).getTime())) {
-      nextErrors.arrivalTime = "Choose a valid arrival date and time.";
-    }
-
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length === 0) {
-      const criteria = { destination: trimmedDestination, arrivalTime };
-      setCapturedCriteria(criteria);
-      onSearch(criteria);
-      return;
-    }
-
-    setCapturedCriteria(null);
-    onSearch(null);
-  }
-
-  function handleDestinationChange(event) {
-    setDestination(event.target.value);
-    setErrors((currentErrors) => ({ ...currentErrors, destination: undefined }));
-    setCapturedCriteria(null);
-    onSearch(null);
-  }
-
-  function handleArrivalTimeChange(event) {
-    setArrivalTime(event.target.value);
-    setErrors((currentErrors) => ({ ...currentErrors, arrivalTime: undefined }));
-    setCapturedCriteria(null);
-    onSearch(null);
+    onSearch({ destination, entryGate, vehicleType });
   }
 
   return (
-    <form
-      className="search-panel"
-      id="parking-search"
-      aria-label="Parking search"
-      onSubmit={handleSubmit}
-      noValidate
-    >
-      <div className="search-fields">
-        <label className="search-field destination-field">
-          <MapPin className="field-icon" size={19} strokeWidth={1.8} aria-hidden="true" />
-          <span className="field-content">
-            <span className="field-label">YOUR DESTINATION</span>
-            <input
-              type="text"
-              name="destination"
-              placeholder="Enter a place or address"
-              autoComplete="street-address"
-              required
-              value={destination}
-              onChange={handleDestinationChange}
-              aria-invalid={Boolean(errors.destination)}
-              aria-describedby={errors.destination ? "destination-error" : undefined}
-            />
-            {errors.destination && (
-              <span className="field-error" id="destination-error" role="alert">
-                {errors.destination}
-              </span>
-            )}
-          </span>
-        </label>
-        <span className="field-divider" aria-hidden="true" />
-        <label className="search-field time-field">
-          <Clock3 className="field-icon" size={19} strokeWidth={1.8} aria-hidden="true" />
-          <span className="field-content">
-            <span className="field-label">ARRIVAL TIME</span>
-            <input
-              type="datetime-local"
-              name="arrival-time"
-              required
-              value={arrivalTime}
-              onChange={handleArrivalTimeChange}
-              aria-invalid={Boolean(errors.arrivalTime)}
-              aria-describedby={errors.arrivalTime ? "arrival-time-error" : undefined}
-            />
-            {errors.arrivalTime && (
-              <span className="field-error" id="arrival-time-error" role="alert">
-                {errors.arrivalTime}
-              </span>
-            )}
-          </span>
-        </label>
-      </div>
-      <button className="search-button" type="submit">
-        <Search size={17} strokeWidth={2} aria-hidden="true" />
-        Find parking
+    <form className="search-panel" aria-label="Find campus parking" onSubmit={handleSubmit}>
+      <label className="search-field">
+        <span className="search-field-icon"><MapPin size={17} /></span>
+        <span className="search-field-copy">
+          <span className="field-label">DESTINATION</span>
+          <select aria-label="Destination" value={destination} onChange={(event) => setDestination(event.target.value)}>
+            {DESTINATIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </span>
+      </label>
+      <label className="search-field">
+        <span className="search-field-icon"><Signpost size={17} /></span>
+        <span className="search-field-copy">
+          <span className="field-label">ENTRY GATE</span>
+          <select aria-label="Entry gate" value={entryGate} onChange={(event) => setEntryGate(event.target.value)}>
+            <option value="gate_north">North Gate</option>
+            <option value="gate_south">South Gate</option>
+          </select>
+        </span>
+      </label>
+      <label className="search-field">
+        <span className="search-field-icon"><CarFront size={17} /></span>
+        <span className="search-field-copy">
+          <span className="field-label">VEHICLE TYPE</span>
+          <select aria-label="Vehicle type" value={vehicleType} onChange={(event) => setVehicleType(event.target.value)}>
+            <option value="car">Car</option>
+            <option value="two-wheeler">Two-wheeler</option>
+          </select>
+        </span>
+      </label>
+      <button className="button button-primary search-submit" type="submit" disabled={searchStatus === "loading"}>
+        {searchStatus === "loading" ? "Searching…" : "Find parking"}
+        <ArrowRight size={16} aria-hidden="true" />
       </button>
-      {capturedCriteria ? (
-        <p className="search-status search-success" role="status" aria-live="polite">
-          {searchStatus === "loading"
-            ? `Searching for ${capturedCriteria.destination}…`
-            : searchStatus === "success"
-              ? `Showing results for ${capturedCriteria.destination}.`
-              : searchStatus === "error"
-                ? `Could not load results for ${capturedCriteria.destination}.`
-                : `Search ready for ${capturedCriteria.destination}.`}
-        </p>
-      ) : (
-        <p className="search-status" aria-live="polite">
-          Enter a destination and arrival time to search.
-        </p>
-      )}
+      <p className="search-status" aria-live="polite">
+        {searchStatus === "loading"
+          ? "Finding the best available route…"
+          : searchStatus === "success"
+            ? "Recommendations updated from current simulated occupancy."
+            : searchStatus === "error"
+              ? "Could not load recommendations. Check the backend connection."
+              : "Routes use the fixed campus road network."}
+      </p>
     </form>
   );
 }

@@ -1,127 +1,165 @@
-from fastapi.testclient import TestClient
 from unittest.mock import patch
-from app.repositories.dependencies import get_parking_repository
-from app.repositories.parking_repository import InMemoryParkingRepository
+
+from fastapi.testclient import TestClient
+
 from app.core.config import settings
 from app.main import app
+from app.repositories.dependencies import get_parking_repository
+from app.repositories.parking_repository import InMemoryParkingRepository
 
 
-def test_get_recommendations_success(client: TestClient):
-    """Ensure recommendations comply strictly with frontend contract."""
-    payload = {
-        "destination": "Riverfront, Pune",
-        "arrivalTime": "2026-10-25T14:30:00"
+def _request(**overrides):
+    return {
+        "destination": "Library",
+        "entryGate": "gate_north",
+        "vehicleType": "car",
+        **overrides,
     }
-    response = client.post("/api/recommendations", json=payload)
+
+
+def test_get_campus_recommendations_returns_current_state_and_routes(client: TestClient):
+    response = client.post("/api/recommendations", json=_request())
     assert response.status_code == 200
     results = response.json()
 
-    assert isinstance(results, list)
-    assert len(results) >= 3
-
-    seen_ids = set()
-    has_recommended = False
-
-    for opt in results:
-        assert "id" in opt and opt["id"]
-        assert opt["id"] not in seen_ids
-        seen_ids.add(opt["id"])
-
-        assert "name" in opt and isinstance(opt["name"], str)
-        assert "totalCapacity" in opt and isinstance(opt["totalCapacity"], int)
-        assert "predictedOccupiedSpaces" in opt and isinstance(opt["predictedOccupiedSpaces"], int)
-        assert "predictedFreeSpaces" in opt and isinstance(opt["predictedFreeSpaces"], int)
-        assert "distanceKm" in opt and isinstance(opt["distanceKm"], (int, float))
-        assert "coordinates" in opt and len(opt["coordinates"]) == 2
-
-        # Pune / Maharashtra coordinate bounding check
-        lat, lon = opt["coordinates"]
-        assert 6.5 <= lat <= 35.7
-        assert 68.1 <= lon <= 97.4
-
-        # Strict occupancy invariant required by frontend
-        assert opt["predictedOccupiedSpaces"] + opt["predictedFreeSpaces"] == opt["totalCapacity"]
-
-        if opt.get("recommendationStatus") == "Recommended":
-            has_recommended = True
-
-    assert has_recommended is True
+    assert results
+    assert results[0]["recommendationStatus"] == "Recommended"
+    assert results[0]["id"] == "P1"
+    assert results[0]["availableSpaces"] == 35
+    assert results[0]["occupiedSpaces"] == 15
+    assert results[0]["totalCapacity"] == 50
+    assert results[0]["routeDistanceMeters"] == 170
+    assert results[0]["walkingDistanceMeters"] == 390
+    assert results[0]["routePath"][0] == "gate_north"
+    assert results[0]["routePath"][-1] == "dest_library"
+    assert results[0]["recommendationReason"]
+    assert results[0]["isSimulated"] is True
+    assert all("predictedOccupiedSpaces" not in option for option in results)
+    for option in results:
+        assert option["availableSpaces"] + option["occupiedSpaces"] == option["totalCapacity"]
+        assert option["routeDistanceMeters"] + option["walkingDistanceMeters"] == option["totalDistanceMeters"]
 
 
-def test_get_recommendations_with_timezone_timestamp(client: TestClient):
-    """Accept ISO-8601 with timezone offsets or UTC Z."""
-    payload = {
-        "destination": "Market Street, Pune",
-        "arrivalTime": "2026-10-25T14:30:00+05:30"
-    }
-    response = client.post("/api/recommendations", json=payload)
-    assert response.status_code == 200
-    assert len(response.json()) >= 3
+def test_both_entry_gates_are_accepted(client: TestClient):
+    for gate in ("gate_north", "gate_south"):
+        response = client.post(
+            "/api/recommendations",
+            json=_request(entryGate=gate, destination="Sports Complex"),
+        )
+        assert response.status_code == 200
+        assert response.json()[0]["entryGate"] == gate
 
 
-def test_get_recommendations_invalid_timestamp_returns_422(client: TestClient):
-    """Ensure invalid timestamp string produces a 422 error."""
-    payload = {
-        "destination": "Riverfront, Pune",
-        "arrivalTime": "not-a-valid-timestamp"
-    }
-    response = client.post("/api/recommendations", json=payload)
-    assert response.status_code == 422
-    data = response.json()
-    assert "error" in data
-    assert data["error"]["type"] == "validation_error"
+def test_all_supported_destinations_are_accepted(client: TestClient):
+    for destination in (
+        "Library",
+        "Academic Block",
+        "Canteen",
+        "Auditorium",
+        "Sports Complex",
+    ):
+        response = client.post(
+            "/api/recommendations",
+            json=_request(destination=destination),
+        )
+        assert response.status_code == 200
+        assert response.json()
 
 
-def test_get_recommendations_empty_destination_returns_422(client: TestClient):
-    """Ensure empty or whitespace-only destination produces a 422 error."""
-    payload = {
-        "destination": "   ",
-        "arrivalTime": "2026-10-25T14:30:00"
-    }
-    response = client.post("/api/recommendations", json=payload)
-    assert response.status_code == 422
-    assert response.json()["error"]["type"] == "validation_error"
+def test_recommendations_use_current_simulated_occupancy_after_events(client: TestClient):
+    entry = client.post("/api/parking/P1/entry", json={"vehicleType": "car"})
+    assert entry.status_code == 200
+    response = client.post("/api/recommendations", json=_request())
+    p1 = next(item for item in response.json() if item["id"] == "P1")
+    assert p1["availableSpaces"] == 34
+    assert p1["occupiedSpaces"] == 16
 
 
-def test_get_recommendations_when_no_parking_available_returns_empty_list(client: TestClient):
-    """When the database has zero records, returns [] without crashing."""
-    empty_repo = InMemoryParkingRepository([])
-    app.dependency_overrides[get_parking_repository] = lambda: empty_repo
+def test_full_facility_and_vehicle_incompatible_facility_are_excluded(client: TestClient):
+    repository = InMemoryParkingRepository([
+        {
+            "id": "P1",
+            "name": "North Parking",
+            "totalCapacity": 1,
+            "acceptedVehicleTypes": ["car", "two-wheeler"],
+            "isSimulated": True,
+            "dataSource": "simulated-campus-v1",
+            "currentOccupancy": {
+                "occupiedSpaces": 1,
+                "freeSpaces": 0,
+                "vehicleCounts": {"car": 1, "two-wheeler": 0},
+            },
+        },
+        {
+            "id": "P2",
+            "name": "Library Parking",
+            "totalCapacity": 30,
+            "acceptedVehicleTypes": ["car"],
+            "isSimulated": True,
+            "dataSource": "simulated-campus-v1",
+            "currentOccupancy": {
+                "occupiedSpaces": 18,
+                "freeSpaces": 12,
+                "vehicleCounts": {"car": 18},
+            },
+        },
+    ])
+    app.dependency_overrides[get_parking_repository] = lambda: repository
     try:
-        payload = {
-            "destination": "Riverfront, Pune",
-            "arrivalTime": "2026-10-25T14:30:00"
-        }
-        response = client.post("/api/recommendations", json=payload)
+        response = client.post(
+            "/api/recommendations",
+            json=_request(vehicleType="two-wheeler"),
+        )
         assert response.status_code == 200
         assert response.json() == []
     finally:
         app.dependency_overrides.clear()
 
 
-def test_get_recommendations_when_engine_unavailable_returns_503(client: TestClient):
-    """When the module import fails, the API returns a 503 instead of fabricated results."""
-    import importlib
+def test_no_eligible_facilities_returns_empty_array(client: TestClient):
+    empty_repo = InMemoryParkingRepository([])
+    app.dependency_overrides[get_parking_repository] = lambda: empty_repo
+    try:
+        response = client.post("/api/recommendations", json=_request())
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        app.dependency_overrides.clear()
 
-    real_import_module = importlib.import_module
 
-    def import_module(name, package=None):
-        if name == "recommendation_engine.dijkstra":
-            raise ModuleNotFoundError(
-                "No module named 'recommendation_engine.dijkstra'",
-                name="recommendation_engine.dijkstra",
-            )
-        return real_import_module(name, package)
+def test_unknown_destination_and_gate_are_rejected(client: TestClient):
+    destination_response = client.post(
+        "/api/recommendations",
+        json=_request(destination="Pune"),
+    )
+    gate_response = client.post(
+        "/api/recommendations",
+        json=_request(entryGate="west_gate"),
+    )
+    assert destination_response.status_code == 422
+    assert gate_response.status_code == 422
 
-    with patch.object(settings, "REC_ADAPTER_MODE", "module"):
-        with patch("importlib.import_module", side_effect=import_module):
-            payload = {
-                "destination": "Riverfront, Pune",
-                "arrivalTime": "2026-10-25T14:30:00"
-            }
-            response = client.post("/api/recommendations", json=payload)
+
+def test_unsupported_vehicle_type_is_rejected(client: TestClient):
+    response = client.post(
+        "/api/recommendations",
+        json=_request(vehicleType="bus"),
+    )
+    assert response.status_code == 422
+
+
+def test_existing_request_shape_defaults_vehicle_and_gate(client: TestClient):
+    response = client.post("/api/recommendations", json={"destination": "Library"})
+    assert response.status_code == 200
+    assert response.json()[0]["entryGate"] == "gate_north"
+
+
+def test_module_mode_reports_missing_campus_engine(client: TestClient):
+    with patch.dict(
+        "sys.modules",
+        {"recommendation_engine.campus_recommendation": None},
+    ):
+        with patch.object(settings, "REC_ADAPTER_MODE", "module"):
+            response = client.post("/api/recommendations", json=_request())
     assert response.status_code == 503
-    data = response.json()
-    assert "error" in data
-    assert data["error"]["type"] == "integration_unavailable"
-    assert "Recommendation Engine" in data["error"]["message"]
+    assert response.json()["error"]["type"] == "integration_unavailable"

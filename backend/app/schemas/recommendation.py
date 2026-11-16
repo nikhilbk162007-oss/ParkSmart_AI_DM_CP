@@ -1,16 +1,25 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
 
 class RecommendationRequest(BaseModel):
     """
-    Search criteria sent by Frontend search form:
-    - destination: Required non-empty string.
-    - arrivalTime: Required ISO-8601 timestamp.
+    Campus recommendation criteria. arrivalTime remains optional for older clients;
+    campus routes are static and do not depend on arrival time.
     """
     destination: str = Field(..., min_length=1, description="Destination address or place")
-    arrival_time: datetime = Field(..., alias="arrivalTime", description="Target arrival timestamp in ISO-8601 format")
+    arrival_time: Optional[datetime] = Field(
+        default=None,
+        alias="arrivalTime",
+        description="Optional legacy field; campus routes are not time-dependent",
+    )
+    vehicle_type: Literal["car", "two-wheeler"] = Field(
+        default="car", alias="vehicleType"
+    )
+    entry_gate: Literal["gate_north", "gate_south"] = Field(
+        default="gate_north", alias="entryGate"
+    )
 
     @field_validator("destination")
     @classmethod
@@ -18,20 +27,21 @@ class RecommendationRequest(BaseModel):
         stripped = v.strip()
         if not stripped:
             raise ValueError("Destination cannot be empty or whitespace")
+        allowed_destinations = {
+            "library",
+            "academic block",
+            "canteen",
+            "auditorium",
+            "sports complex",
+            "dest_library",
+            "dest_academic_block",
+            "dest_canteen",
+            "dest_auditorium",
+            "dest_sports_complex",
+        }
+        if stripped.casefold() not in allowed_destinations:
+            raise ValueError("Destination must be a supported campus destination")
         return stripped
-
-    @field_validator("arrival_time", mode="before")
-    @classmethod
-    def parse_and_validate_iso_timestamp(cls, v):
-        if isinstance(v, str):
-            # Parse ISO-8601 string
-            try:
-                # fromisoformat handles standard ISO 8601 (e.g. 2026-10-25T14:30:00 or with timezone)
-                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
-                return dt
-            except Exception as e:
-                raise ValueError(f"Invalid ISO-8601 timestamp format: '{v}'. Error: {e}")
-        return v
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -70,3 +80,48 @@ class ParkingOption(BaseModel):
         populate_by_name=True,
         serialize_by_alias=True
     )
+
+
+class CampusRouteSegment(BaseModel):
+    segment: Literal["entry-to-parking", "parking-to-destination"]
+    distance_meters: int = Field(..., ge=0, alias="distanceMeters")
+    path: List[str]
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class CampusParkingRecommendation(BaseModel):
+    id: str = Field(..., min_length=1)
+    name: str
+    total_capacity: int = Field(..., ge=1, alias="totalCapacity")
+    available_spaces: int = Field(..., ge=1, alias="availableSpaces")
+    occupied_spaces: int = Field(..., ge=0, alias="occupiedSpaces")
+    accepted_vehicle_types: List[Literal["car", "two-wheeler"]] = Field(
+        ..., alias="acceptedVehicleTypes"
+    )
+    is_simulated: bool = Field(..., alias="isSimulated")
+    data_source: str = Field(..., alias="dataSource")
+    entry_gate: str = Field(..., alias="entryGate")
+    destination: str
+    route_distance_meters: int = Field(..., ge=0, alias="routeDistanceMeters")
+    walking_distance_meters: int = Field(..., ge=0, alias="walkingDistanceMeters")
+    total_distance_meters: int = Field(..., ge=0, alias="totalDistanceMeters")
+    entry_route_path: List[str] = Field(..., alias="entryRoutePath")
+    walking_route_path: List[str] = Field(..., alias="walkingRoutePath")
+    route_path: List[str] = Field(..., alias="routePath")
+    route_details: List[CampusRouteSegment] = Field(..., alias="routeDetails")
+    score: float = Field(..., ge=0.0, le=1.0)
+    recommendation_reason: str = Field(..., alias="recommendationReason")
+    recommendation_status: Literal["Recommended", "Alternative option"] = Field(
+        ..., alias="recommendationStatus"
+    )
+
+    @model_validator(mode="after")
+    def validate_occupancy_and_route(self) -> "CampusParkingRecommendation":
+        if self.available_spaces + self.occupied_spaces != self.total_capacity:
+            raise ValueError("availableSpaces + occupiedSpaces must equal totalCapacity")
+        if self.route_distance_meters + self.walking_distance_meters != self.total_distance_meters:
+            raise ValueError("Route segment distances must sum to totalDistanceMeters")
+        return self
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)

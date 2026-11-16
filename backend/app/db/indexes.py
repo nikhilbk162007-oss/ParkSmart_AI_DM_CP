@@ -7,12 +7,12 @@ logger = logging.getLogger("parksmart.db.indexes")
 
 def ensure_parking_indexes(db: Database) -> None:
     """
-    Idempotent index creation for parking collection.
+    Idempotent index creation for parking and authentication collections.
     Can safely be executed multiple times without recreating or failing.
     Indexes:
-    1. 'id' - Unique index enforcing stable string parking IDs.
-    2. 'is_simulated' - Compound or single index for filtering demo vs real facilities.
-    3. 'created_at' - Index for timestamp ordering.
+    - Unique stable parking IDs and account usernames.
+    - Parking simulation/timestamp query fields.
+    - Unique revoked-token IDs with expiry cleanup.
     """
     if db is None:
         logger.warning("Database reference is None. Skipping index initialization.")
@@ -38,7 +38,22 @@ def ensure_parking_indexes(db: Database) -> None:
             [("createdAt", ASCENDING)],
             name="idx_parking_created_at"
         )
-        logger.info("All parking collection indexes verified successfully.")
+        db.users.create_index(
+            [("username", ASCENDING)],
+            unique=True,
+            name="uq_user_username",
+        )
+        db.revoked_tokens.create_index(
+            [("jti", ASCENDING)],
+            unique=True,
+            name="uq_revoked_token_jti",
+        )
+        db.revoked_tokens.create_index(
+            [("expiresAt", ASCENDING)],
+            expireAfterSeconds=0,
+            name="ttl_revoked_token_expiration",
+        )
+        logger.info("All database indexes verified successfully.")
     except Exception as e:
-        logger.error("Error creating indexes on parking collection: %s", e)
+        logger.error("Error creating database indexes (%s).", type(e).__name__)
         raise

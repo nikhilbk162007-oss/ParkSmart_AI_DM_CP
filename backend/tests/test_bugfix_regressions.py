@@ -10,7 +10,6 @@ from app.repositories.dependencies import get_parking_repository
 from app.repositories.parking_repository import InMemoryParkingRepository, DEFAULT_PARKING_FIXTURES
 from app.schemas.parking import ParkingUpdate
 from app.services.parking_service import ParkingService
-from app.integrations.ml_contract import MLPredictionResult
 
 
 VALID_CREATE = {
@@ -23,23 +22,23 @@ VALID_CREATE = {
 
 @pytest.mark.parametrize(
     "field",
-    ["name", "totalCapacity", "coordinates", "coordinateSource", "dataSource", "isSimulated", "metadata"],
+    ["name", "totalCapacity", "coordinateSource", "dataSource", "isSimulated", "acceptedVehicleTypes", "metadata", "currentOccupancy"],
 )
 def test_patch_explicit_null_rejected_without_changing_record(client, field):
-    before = client.get("/api/parking/fixture-riverfront").json()
-    response = client.patch("/api/parking/fixture-riverfront", json={field: None})
+    before = client.get("/api/parking/P1").json()
+    response = client.patch("/api/parking/P1", json={field: None})
     assert response.status_code == 422
     assert client.get("/api/parking").status_code == 200
-    assert client.get("/api/parking/fixture-riverfront").json() == before
+    assert client.get("/api/parking/P1").json() == before
 
 
 def test_patch_blank_name_rejected(client):
-    assert client.patch("/api/parking/fixture-riverfront", json={"name": "  "}).status_code == 422
+    assert client.patch("/api/parking/P1", json={"name": "  "}).status_code == 422
 
 
 def test_patch_cors_preflight_allows_patch(client):
     response = client.options(
-        "/api/parking/fixture-riverfront",
+        "/api/parking/P1",
         headers={
             "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "PATCH",
@@ -59,9 +58,9 @@ def test_mongodb_outage_returns_503_for_parking_prediction_and_recommendations()
                 client.post("/api/parking", json=VALID_CREATE),
                 client.patch("/api/parking/not-found", json={"name": "Changed"}),
                 client.delete("/api/parking/not-found"),
-                client.get("/api/predictions/fixture-riverfront"),
+                client.get("/api/predictions/P1"),
                 client.post("/api/recommendations", json={
-                    "destination": "Pune",
+                    "destination": "Library",
                     "arrivalTime": "2026-10-25T14:30:00",
                 }),
             ]
@@ -71,11 +70,11 @@ def test_mongodb_outage_returns_503_for_parking_prediction_and_recommendations()
 
 def test_naive_and_india_offset_arrival_times_produce_same_prediction(client):
     naive = client.get(
-        "/api/predictions/fixture-riverfront",
+        "/api/predictions/P1",
         params={"target_time": "2026-10-25T14:30:00"},
     ).json()
     aware = client.get(
-        "/api/predictions/fixture-riverfront",
+        "/api/predictions/P1",
         params={"target_time": "2026-10-25T14:30:00+05:30"},
     ).json()
     assert naive["predictedOccupiedSpaces"] == aware["predictedOccupiedSpaces"]
@@ -87,6 +86,7 @@ def test_patch_capacity_below_measured_occupancy_is_rejected_without_mutation():
     record["currentOccupancy"] = {
         "occupiedSpaces": 300,
         "freeSpaces": 120,
+        "vehicleCounts": {"car": 300},
     }
     repository = InMemoryParkingRepository([record])
     before = repository.get_by_id(record["id"])
@@ -97,10 +97,11 @@ def test_patch_capacity_below_measured_occupancy_is_rejected_without_mutation():
     assert repository.get_by_id(record["id"]) == before
 
 
-def test_parking_response_includes_metadata(client):
-    response = client.get("/api/parking/fixture-riverfront")
+def test_parking_response_includes_simulation_metadata(client):
+    response = client.get("/api/parking/P1")
     assert response.status_code == 200
-    assert response.json()["metadata"]["city"] == "Pune"
+    assert response.json()["dataSource"] == "simulated-campus-v1"
+    assert response.json()["isSimulated"] is True
 
 
 def test_test_client_lifespan_does_not_attempt_mongo_connect():
@@ -111,32 +112,13 @@ def test_test_client_lifespan_does_not_attempt_mongo_connect():
     connect.assert_called_once()
 
 
-@pytest.mark.parametrize("fail_all", [False, True])
-def test_recommendations_handle_prediction_failures(client, caplog, fail_all):
-    class PartiallyFailingMLAdapter:
-        async def predict_occupancy(self, parking_id, total_capacity, target_time, features=None):
-            if fail_all or parking_id == "fixture-riverfront":
-                raise RuntimeError("prediction unavailable")
-            return MLPredictionResult(
-                predicted_occupied_spaces=total_capacity // 2,
-                predicted_free_spaces=total_capacity - total_capacity // 2,
-                occupancy_percentage=50.0,
-                confidence_score=None,
-                model_source="test",
-                predicted_at=target_time,
-                target_time=target_time,
-            )
-
-    with patch("app.api.routes.recommendations.get_ml_adapter", return_value=PartiallyFailingMLAdapter()):
-        response = client.post("/api/recommendations", json={
-            "destination": "Pune",
-            "arrivalTime": "2026-10-25T14:30:00+05:30",
-        })
-    if fail_all:
-        assert response.status_code == 503
-        assert response.json()["error"]["type"] == "integration_unavailable"
-    else:
-        assert response.status_code == 200
-        assert len(response.json()) == 2
-        assert "fixture-riverfront" not in {option["id"] for option in response.json()}
-    assert "Excluding parking candidate" in caplog.text
+def test_recommendations_use_repository_occupancy_without_calling_ml(client):
+    response = client.post("/api/recommendations", json={
+        "destination": "Library",
+        "entryGate": "gate_north",
+        "vehicleType": "car",
+    })
+    assert response.status_code == 200
+    p1 = next(option for option in response.json() if option["id"] == "P1")
+    assert p1["occupiedSpaces"] == 15
+    assert p1["availableSpaces"] == 35

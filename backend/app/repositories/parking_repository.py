@@ -1,57 +1,91 @@
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
+from copy import deepcopy
+from threading import RLock
+from pymongo import ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 import logging
-from app.models.parking import ParkingFacility
+from app.models.parking import ParkingFacility, VehicleType
 from app.core.errors import DuplicateEntityError, EntityNotFoundError
 
 logger = logging.getLogger("parksmart.repositories")
 
-# Verified base fixtures strictly matching Frontend/src/data/parkingFixtures.js
-# Explicitly marked as simulated and non-production
+# Fictional campus simulation data; initial occupied vehicles are seeded as cars
+# because no vehicle-type breakdown was supplied.
 DEFAULT_PARKING_FIXTURES: List[Dict[str, Any]] = [
     {
-        "id": "fixture-riverfront",
-        "name": "Riverfront Parking House",
-        "totalCapacity": 420,
-        "coordinates": [18.5204, 73.8567],
-        "coordinateSource": "simulated-development",
-        "dataSource": "simulated-development",
+        "id": "P1",
+        "name": "North Parking",
+        "totalCapacity": 50,
+        "acceptedVehicleTypes": ["car", "two-wheeler"],
         "isSimulated": True,
-        "address": "Riverfront Road, Pune",
-        "metadata": {"city": "Pune", "type": "Multi-level garage"},
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": 15,
+            "freeSpaces": 35,
+            "vehicleCounts": {"car": 15, "two-wheeler": 0},
+            "occupancyPercentage": 30.0,
+        },
         "createdAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
         "updatedAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     },
     {
-        "id": "fixture-market",
-        "name": "Market Street Garage",
-        "totalCapacity": 310,
-        "coordinates": [18.5314, 73.8446],
-        "coordinateSource": "simulated-development",
-        "dataSource": "simulated-development",
+        "id": "P2",
+        "name": "Library Parking",
+        "totalCapacity": 30,
+        "acceptedVehicleTypes": ["car"],
         "isSimulated": True,
-        "address": "Market Street, Shivajinagar, Pune",
-        "metadata": {"city": "Pune", "type": "Surface lot"},
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": 18,
+            "freeSpaces": 12,
+            "vehicleCounts": {"car": 18},
+            "occupancyPercentage": 60.0,
+        },
         "createdAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
         "updatedAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
     },
     {
-        "id": "fixture-garden",
-        "name": "Garden District Parking",
-        "totalCapacity": 560,
-        "coordinates": [18.5074, 73.8077],
-        "coordinateSource": "simulated-development",
-        "dataSource": "simulated-development",
+        "id": "P3",
+        "name": "South Parking",
+        "totalCapacity": 40,
+        "acceptedVehicleTypes": ["car", "two-wheeler"],
         "isSimulated": True,
-        "address": "Garden Road, Kothrud, Pune",
-        "metadata": {"city": "Pune", "type": "Underground parking"},
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": 35,
+            "freeSpaces": 5,
+            "vehicleCounts": {"car": 35, "two-wheeler": 0},
+            "occupancyPercentage": 87.5,
+        },
         "createdAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
         "updatedAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-    }
+    },
+    {
+        "id": "P4",
+        "name": "Sports Parking",
+        "totalCapacity": 60,
+        "acceptedVehicleTypes": ["car", "two-wheeler"],
+        "isSimulated": True,
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": 20,
+            "freeSpaces": 40,
+            "vehicleCounts": {"car": 20, "two-wheeler": 0},
+            "occupancyPercentage": 33.3,
+        },
+        "createdAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        "updatedAt": datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+    },
 ]
+
+LEGACY_SIMULATED_FIXTURE_IDS = (
+    "fixture-riverfront",
+    "fixture-market",
+    "fixture-garden",
+)
 
 
 class ParkingRepository(ABC):
@@ -83,6 +117,20 @@ class ParkingRepository(ABC):
     @abstractmethod
     def upsert(self, parking_doc: Dict[str, Any]) -> bool:
         """Upsert convenience for idempotency."""
+        pass
+
+    @abstractmethod
+    def record_vehicle_entry(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically add one vehicle if the facility has capacity."""
+        pass
+
+    @abstractmethod
+    def record_vehicle_exit(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically remove one parked vehicle of the specified type."""
         pass
 
 
@@ -162,6 +210,88 @@ class MongoParkingRepository(ParkingRepository):
             logger.error("Error upserting parking doc in MongoDB: %s", e)
             return False
 
+    def _record_vehicle_event(
+        self, parking_id: str, vehicle_type: VehicleType, entering: bool
+    ) -> Optional[Dict[str, Any]]:
+        if self.db is None:
+            raise RuntimeError("Database connection is not initialized")
+
+        vehicle_count_path = f"currentOccupancy.vehicleCounts.{vehicle_type}"
+        delta = 1 if entering else -1
+        query: Dict[str, Any] = {
+            "id": parking_id,
+            "acceptedVehicleTypes": vehicle_type,
+        }
+        if entering:
+            query["$expr"] = {
+                "$lt": [
+                    "$currentOccupancy.occupiedSpaces",
+                    "$totalCapacity",
+                ]
+            }
+        else:
+            query[vehicle_count_path] = {"$gt": 0}
+
+        now = datetime.now(timezone.utc)
+        occupied_after = {
+            "$add": ["$currentOccupancy.occupiedSpaces", delta]
+        }
+        update_pipeline = [
+            {
+                "$set": {
+                    "currentOccupancy.occupiedSpaces": occupied_after,
+                    "currentOccupancy.freeSpaces": {
+                        "$subtract": ["$currentOccupancy.freeSpaces", delta]
+                    },
+                    vehicle_count_path: {
+                        "$add": [
+                            {"$ifNull": [f"${vehicle_count_path}", 0]},
+                            delta,
+                        ]
+                    },
+                    "currentOccupancy.occupancyPercentage": {
+                        "$cond": [
+                            {"$gt": ["$totalCapacity", 0]},
+                            {
+                                "$round": [
+                                    {
+                                        "$multiply": [
+                                            {
+                                                "$divide": [
+                                                    occupied_after,
+                                                    "$totalCapacity",
+                                                ]
+                                            },
+                                            100,
+                                        ]
+                                    },
+                                    1,
+                                ]
+                            },
+                            0.0,
+                        ]
+                    },
+                    "updatedAt": now,
+                }
+            }
+        ]
+        return self.db.parking.find_one_and_update(
+            query,
+            update_pipeline,
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def record_vehicle_entry(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        return self._record_vehicle_event(parking_id, vehicle_type, entering=True)
+
+    def record_vehicle_exit(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        return self._record_vehicle_event(parking_id, vehicle_type, entering=False)
+
 
 class InMemoryParkingRepository(ParkingRepository):
     """
@@ -172,43 +302,93 @@ class InMemoryParkingRepository(ParkingRepository):
     def __init__(self, initial_data: Optional[List[Dict[str, Any]]] = None):
         data = initial_data if initial_data is not None else DEFAULT_PARKING_FIXTURES
         self._store: Dict[str, Dict[str, Any]] = {
-            item["id"]: dict(item) for item in data
+            item["id"]: deepcopy(item) for item in data
         }
+        self._lock = RLock()
 
     def get_all(self, filter_simulated: Optional[bool] = None) -> List[Dict[str, Any]]:
-        results = [dict(v) for v in self._store.values()]
-        if filter_simulated is not None:
-            results = [r for r in results if r.get("isSimulated", True) == filter_simulated]
-        return results
+        with self._lock:
+            results = [deepcopy(v) for v in self._store.values()]
+            if filter_simulated is not None:
+                results = [r for r in results if r.get("isSimulated", True) == filter_simulated]
+            return results
 
     def get_by_id(self, parking_id: str) -> Optional[Dict[str, Any]]:
-        item = self._store.get(parking_id)
-        return dict(item) if item else None
+        with self._lock:
+            item = self._store.get(parking_id)
+            return deepcopy(item) if item else None
 
     def create(self, facility: ParkingFacility) -> Dict[str, Any]:
-        if facility.id in self._store:
-            raise DuplicateEntityError("Parking facility", facility.id)
-        doc = facility.model_dump(by_alias=True)
-        self._store[facility.id] = dict(doc)
-        return dict(doc)
+        with self._lock:
+            if facility.id in self._store:
+                raise DuplicateEntityError("Parking facility", facility.id)
+            doc = facility.model_dump(by_alias=True)
+            self._store[facility.id] = deepcopy(doc)
+            return deepcopy(doc)
 
     def update(self, parking_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-        if parking_id not in self._store:
-            raise EntityNotFoundError("Parking facility", parking_id)
-        existing = dict(self._store[parking_id])
-        existing.update(updates)
-        existing["updatedAt"] = datetime.now(timezone.utc)
-        self._store[parking_id] = existing
-        return dict(existing)
+        with self._lock:
+            if parking_id not in self._store:
+                raise EntityNotFoundError("Parking facility", parking_id)
+            existing = deepcopy(self._store[parking_id])
+            existing.update(deepcopy(updates))
+            existing["updatedAt"] = datetime.now(timezone.utc)
+            self._store[parking_id] = existing
+            return deepcopy(existing)
 
     def delete(self, parking_id: str) -> bool:
-        if parking_id not in self._store:
-            raise EntityNotFoundError("Parking facility", parking_id)
-        del self._store[parking_id]
-        return True
+        with self._lock:
+            if parking_id not in self._store:
+                raise EntityNotFoundError("Parking facility", parking_id)
+            del self._store[parking_id]
+            return True
 
     def upsert(self, parking_doc: Dict[str, Any]) -> bool:
-        doc = dict(parking_doc)
-        doc["updatedAt"] = datetime.now(timezone.utc)
-        self._store[doc["id"]] = doc
-        return True
+        with self._lock:
+            doc = deepcopy(parking_doc)
+            doc["updatedAt"] = datetime.now(timezone.utc)
+            self._store[doc["id"]] = doc
+            return True
+
+    def _record_vehicle_event(
+        self, parking_id: str, vehicle_type: VehicleType, entering: bool
+    ) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            record = self._store.get(parking_id)
+            if record is None:
+                return None
+
+            occupancy = record.get("currentOccupancy")
+            if not isinstance(occupancy, dict):
+                return None
+            vehicle_counts = occupancy.setdefault("vehicleCounts", {})
+            delta = 1 if entering else -1
+            if entering:
+                if occupancy["occupiedSpaces"] >= record["totalCapacity"]:
+                    return None
+            elif vehicle_counts.get(vehicle_type, 0) <= 0:
+                return None
+
+            occupancy["occupiedSpaces"] += delta
+            occupancy["freeSpaces"] -= delta
+            vehicle_counts[vehicle_type] = vehicle_counts.get(vehicle_type, 0) + delta
+            capacity = record["totalCapacity"]
+            occupancy["occupancyPercentage"] = (
+                round(occupancy["occupiedSpaces"] / capacity * 100.0, 1)
+                if capacity
+                else 0.0
+            )
+            now = datetime.now(timezone.utc)
+            record["updatedAt"] = now
+            ParkingFacility(**record)
+            return deepcopy(record)
+
+    def record_vehicle_entry(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        return self._record_vehicle_event(parking_id, vehicle_type, entering=True)
+
+    def record_vehicle_exit(
+        self, parking_id: str, vehicle_type: VehicleType
+    ) -> Optional[Dict[str, Any]]:
+        return self._record_vehicle_event(parking_id, vehicle_type, entering=False)

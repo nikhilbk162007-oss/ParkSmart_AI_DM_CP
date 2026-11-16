@@ -1,23 +1,39 @@
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import Dict, List, Literal, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+VehicleType = Literal["car", "two-wheeler"]
+SUPPORTED_VEHICLE_TYPES = ("car", "two-wheeler")
 
 
 class CurrentOccupancyMeasured(BaseModel):
     """
-    Measured / live sensor occupancy (ground truth from real sensors or lot counters).
-    Explicitly separated from ML predictions.
+    Simulated or measured occupancy, kept separate from ML predictions.
     """
-    occupied_spaces: int = Field(..., ge=0, alias="occupiedSpaces", description="Live measured occupied spaces")
-    free_spaces: int = Field(..., ge=0, alias="freeSpaces", description="Live measured available free spaces")
+    occupied_spaces: int = Field(..., ge=0, alias="occupiedSpaces")
+    free_spaces: int = Field(..., ge=0, alias="freeSpaces")
+    vehicle_counts: Dict[VehicleType, int] = Field(default_factory=dict, alias="vehicleCounts")
     occupancy_percentage: Optional[float] = Field(None, ge=0.0, le=100.0, alias="occupancyPercentage")
-    measured_at: Optional[datetime] = Field(None, alias="measuredAt", description="Timestamp of sensor measurement")
+    measured_at: Optional[datetime] = Field(None, alias="measuredAt")
+
+    @field_validator("vehicle_counts")
+    @classmethod
+    def validate_vehicle_counts(cls, counts: Dict[str, int]) -> Dict[str, int]:
+        if any(type(count) is not int or count < 0 for count in counts.values()):
+            raise ValueError("Vehicle counts must be non-negative integers")
+        return counts
 
     @model_validator(mode="after")
     def compute_and_verify(self) -> "CurrentOccupancyMeasured":
         total = self.occupied_spaces + self.free_spaces
-        if total > 0 and self.occupancy_percentage is None:
-            self.occupancy_percentage = round((self.occupied_spaces / total) * 100.0, 1)
+        if sum(self.vehicle_counts.values()) != self.occupied_spaces:
+            raise ValueError("Vehicle counts must sum to occupiedSpaces")
+        expected_percentage = round((self.occupied_spaces / total) * 100.0, 1) if total else 0.0
+        if self.occupancy_percentage is None:
+            self.occupancy_percentage = expected_percentage
+        elif self.occupancy_percentage != expected_percentage:
+            raise ValueError("occupancyPercentage must match occupiedSpaces and freeSpaces")
         return self
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
@@ -35,20 +51,24 @@ class ParkingFacility(BaseModel):
     # Capacity bounds
     total_capacity: int = Field(..., ge=0, alias="totalCapacity", description="Total physical parking capacity")
     
-    # Coordinates in [latitude, longitude]
-    coordinates: List[float] = Field(..., min_length=2, max_length=2, description="[latitude, longitude]")
+    # Campus fixtures do not invent geographic coordinates.
+    coordinates: Optional[List[float]] = Field(default=None, min_length=2, max_length=2)
     coordinate_source: str = Field(default="simulated-development", alias="coordinateSource")
     
-    # Data provenance and simulation flag (never claim simulated records are real)
+    # Data provenance and simulation flag.
     data_source: str = Field(default="simulated-development", alias="dataSource")
-    is_simulated: bool = Field(default=True, alias="isSimulated", description="Explicit flag: True if synthetic/demo data")
+    is_simulated: bool = Field(default=True, alias="isSimulated", description="True for simulated records")
+    accepted_vehicle_types: List[VehicleType] = Field(
+        default_factory=lambda: list(SUPPORTED_VEHICLE_TYPES),
+        min_length=1,
+        alias="acceptedVehicleTypes",
+    )
     
-    # Measured / live ground-truth occupancy (nullable when sensors not installed)
-    # Strictly separated from calculated ML predictions!
+    # Current occupancy state, separate from calculated ML predictions.
     current_occupancy: Optional[CurrentOccupancyMeasured] = Field(
         default=None,
         alias="currentOccupancy",
-        description="Current measured occupancy (if live sensors exist). Never stores ML predictions."
+        description="Current occupancy counts; campus simulation values are explicitly marked simulated."
     )
     
     # Metadata & timestamps
@@ -80,13 +100,22 @@ class ParkingFacility(BaseModel):
 
     @field_validator("coordinates")
     @classmethod
-    def validate_coordinates(cls, v: List[float]) -> List[float]:
+    def validate_coordinates(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+        if v is None:
+            return None
         lat, lon = v[0], v[1]
         if not (-90.0 <= lat <= 90.0):
             raise ValueError(f"Latitude must be between -90.0 and 90.0, received {lat}")
         if not (-180.0 <= lon <= 180.0):
             raise ValueError(f"Longitude must be between -180.0 and 180.0, received {lon}")
         return v
+
+    @field_validator("accepted_vehicle_types")
+    @classmethod
+    def validate_accepted_vehicle_types(cls, values: List[VehicleType]) -> List[VehicleType]:
+        if len(values) != len(set(values)):
+            raise ValueError("acceptedVehicleTypes cannot contain duplicates")
+        return values
 
     @model_validator(mode="after")
     def validate_capacity_and_occupancy(self) -> "ParkingFacility":
@@ -101,7 +130,18 @@ class ParkingFacility(BaseModel):
                     f"Measured occupiedSpaces ({occ.occupied_spaces}) + freeSpaces ({occ.free_spaces}) "
                     f"must equal totalCapacity ({self.total_capacity})"
                 )
+            unsupported_counts = set(occ.vehicle_counts) - set(self.accepted_vehicle_types)
+            if unsupported_counts:
+                raise ValueError(
+                    "Vehicle counts include types not accepted by this facility: "
+                    + ", ".join(sorted(unsupported_counts))
+                )
         return self
+
+    @property
+    def available_spaces(self) -> int:
+        occupied = self.current_occupancy.occupied_spaces if self.current_occupancy else 0
+        return self.total_capacity - occupied
 
     model_config = ConfigDict(
         populate_by_name=True,

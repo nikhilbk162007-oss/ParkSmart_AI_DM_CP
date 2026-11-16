@@ -55,20 +55,57 @@ def resolve_destination(text: str) -> Tuple[Tuple[float, float], bool]:
     return DEFAULT_REFERENCE, False
 
 
-def _dijkstra(graph: Mapping[str, Mapping[str, float]], start: str) -> Dict[str, float]:
+def _dijkstra_search(
+    graph: Mapping[str, Mapping[str, float]], start: str
+) -> Tuple[Dict[str, float], Dict[str, str]]:
+    if start not in graph:
+        raise ValueError(f"Unknown start node: {start!r}")
     distances = {node: math.inf for node in graph}
     distances[start] = 0.0
+    previous: Dict[str, str] = {}
     frontier: List[Tuple[float, str]] = [(0.0, start)]
     while frontier:
         distance, node = heapq.heappop(frontier)
         if distance != distances[node]:
             continue
-        for neighbor, weight in graph[node].items():
+        for neighbor, weight in sorted(graph[node].items()):
+            if neighbor not in graph:
+                raise ValueError(f"Edge references unknown node: {neighbor!r}")
+            if not isinstance(weight, (int, float)) or not math.isfinite(weight) or weight < 0:
+                raise ValueError("Dijkstra requires finite, non-negative edge weights")
             candidate = distance + weight
             if candidate < distances.get(neighbor, math.inf):
                 distances[neighbor] = candidate
+                previous[neighbor] = node
                 heapq.heappush(frontier, (candidate, neighbor))
+    return distances, previous
+
+
+def _dijkstra(graph: Mapping[str, Mapping[str, float]], start: str) -> Dict[str, float]:
+    """Return shortest distances using the heap-based Dijkstra traversal."""
+    distances, _ = _dijkstra_search(graph, start)
     return distances
+
+
+def shortest_path(
+    graph: Mapping[str, Mapping[str, float]], start: str, end: str
+) -> Tuple[Optional[float], List[str]]:
+    """Return shortest distance and ordered node IDs; unreachable nodes yield (None, [])."""
+    if end not in graph:
+        raise ValueError(f"Unknown destination node: {end!r}")
+    distances, previous = _dijkstra_search(graph, start)
+    distance = distances[end]
+    if not math.isfinite(distance):
+        return None, []
+
+    path = [end]
+    while path[-1] != start:
+        predecessor = previous.get(path[-1])
+        if predecessor is None:
+            return None, []
+        path.append(predecessor)
+    path.reverse()
+    return distance, path
 
 
 def _candidate_center(candidates: Sequence[Mapping[str, Any]]) -> Tuple[float, float]:

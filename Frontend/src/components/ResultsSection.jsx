@@ -1,201 +1,68 @@
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Route } from "lucide-react";
 import ParkingCard from "./ParkingCard.jsx";
 import ParkingMap from "./ParkingMap.jsx";
 
-function formatArrivalTime(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "Invalid arrival time"
-    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-function isNonNegativeFiniteNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
-function isValidSpaceCount(value) {
-  return Number.isInteger(value) && isNonNegativeFiniteNumber(value);
-}
-
-function ResultsSection({ criteria, mode, status, results, error, onRetry }) {
-  const hasRecommendedOption = results.some(
-    (parking) =>
-      typeof parking.recommendationStatus === "string" &&
-      parking.recommendationStatus.trim().toLowerCase() === "recommended",
-  );
-  const [sortBy, setSortBy] = useState(hasRecommendedOption ? "recommended" : "distance");
-  const [maxDistance, setMaxDistance] = useState("");
-  const [minPredictedFreeSpaces, setMinPredictedFreeSpaces] = useState("");
-  const [selectedParkingId, setSelectedParkingId] = useState(null);
-  useEffect(() => {
-    setSortBy(hasRecommendedOption ? "recommended" : "distance");
-  }, [criteria.destination, criteria.arrivalTime, hasRecommendedOption]);
-
-  const filteredResults = useMemo(() => {
-    const filtered = results.filter((parking) => {
-      const withinDistance =
-        maxDistance === "" ||
-        (isNonNegativeFiniteNumber(parking.distanceKm) &&
-          parking.distanceKm <= Number(maxDistance));
-      const meetsAvailability =
-        minPredictedFreeSpaces === "" ||
-        (isValidSpaceCount(parking.predictedFreeSpaces) &&
-          parking.predictedFreeSpaces >= Number(minPredictedFreeSpaces));
-
-      return withinDistance && meetsAvailability;
-    });
-
-    if (sortBy === "recommended") {
-      return filtered;
-    }
-    return filtered.sort((first, second) => {
-      if (sortBy === "predicted-free") {
-        const firstHasCount = isValidSpaceCount(first.predictedFreeSpaces);
-        const secondHasCount = isValidSpaceCount(second.predictedFreeSpaces);
-        if (firstHasCount !== secondHasCount) {
-          return firstHasCount ? -1 : 1;
-        }
-        return firstHasCount ? second.predictedFreeSpaces - first.predictedFreeSpaces : 0;
-      }
-      const firstHasDistance = isNonNegativeFiniteNumber(first.distanceKm);
-      const secondHasDistance = isNonNegativeFiniteNumber(second.distanceKm);
-      if (firstHasDistance !== secondHasDistance) {
-        return firstHasDistance ? -1 : 1;
-      }
-      return firstHasDistance ? first.distanceKm - second.distanceKm : 0;
-    });
-  }, [maxDistance, minPredictedFreeSpaces, results, sortBy]);
-
-  const visibleSelectedParkingId = filteredResults.some(
-    (parking) => parking.id === selectedParkingId,
-  )
-    ? selectedParkingId
-    : null;
-  const activeFilters = maxDistance !== "" || minPredictedFreeSpaces !== "";
-
+function ResultsSection({
+  criteria,
+  status,
+  results = [],
+  error,
+  onRetry,
+  facilities = [],
+  selectedParkingId,
+  onSelectParking,
+}) {
+  const topResult = results[0];
   return (
-    <section className="results-section" aria-labelledby="results-title">
-      <div className="results-heading-row">
-        <div>
-          <p className="results-eyebrow">
-            {mode === "demo" ? "DEVELOPMENT PREVIEW" : "API MODE"}
-          </p>
-          <h2 id="results-title">Parking options</h2>
-          <p className="results-query">
-            For <strong>{criteria.destination}</strong>
-            <span aria-hidden="true"> · </span>
-            Arriving {formatArrivalTime(criteria.arrivalTime)}
-          </p>
-        </div>
-        {status === "success" && (
-          <span className="results-count" aria-live="polite">
-            {mode === "demo"
-              ? `${filteredResults.length} of ${results.length} simulated options`
-              : `${filteredResults.length} ${filteredResults.length === 1 ? "option" : "options"}`}
-          </span>
-        )}
-      </div>
-
-      {mode === "demo" && (
-        <div className="simulation-notice" role="note">
-          <strong>Simulated development data</strong>
-          <span>
-            These sample locations and predicted figures are fictional interface fixtures. They are
-            not based on your destination and do not represent live parking availability.
-          </span>
-        </div>
-      )}
-
+    <section className="view-section" aria-label="Recommendation results">
       {status === "loading" ? (
-        <div className="results-message" role="status" aria-live="polite">
-          <span className="loading-indicator" aria-hidden="true" />
-          <span>Loading parking results…</span>
+        <div className="panel state-panel" role="status">
+          <span className="loading-indicator" />
+          <div><strong>Finding your best route</strong><p>Checking current simulated availability at each compatible facility.</p></div>
         </div>
       ) : status === "error" ? (
-        <div className="results-error" role="alert">
-          <div>
-            <h3>Parking results could not be loaded</h3>
-            <p>{error}</p>
-          </div>
-          <button className="retry-button" type="button" onClick={onRetry}>
-            Try again
-          </button>
+        <div className="panel state-panel error-state" role="alert">
+          <AlertCircle size={22} />
+          <div><strong>Recommendations unavailable</strong><p>{error}</p></div>
+          <button className="button button-secondary" type="button" onClick={onRetry}>Try again</button>
+        </div>
+      ) : status === "success" && results.length === 0 ? (
+        <div className="panel empty-state" role="status">
+          <Route size={26} />
+          <h2>No compatible spaces available</h2>
+          <p>All facilities are full or do not accept this vehicle type. Try another vehicle or check again after a simulated exit.</p>
         </div>
       ) : (
         <>
-          <div className="results-toolbar">
-            <label className="result-control">
-              <span>Sort by</span>
-              <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-                {hasRecommendedOption && <option value="recommended">Recommended order</option>}
-                <option value="distance">Reported distance</option>
-                <option value="predicted-free">Predicted free spaces</option>
-              </select>
-            </label>
-            <label className="result-control">
-              <span>Maximum reported distance (km)</span>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                inputMode="decimal"
-                value={maxDistance}
-                onChange={(event) => setMaxDistance(event.target.value)}
-                placeholder="Any distance"
-              />
-            </label>
-            <label className="result-control">
-              <span>Minimum predicted free spaces</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                inputMode="numeric"
-                value={minPredictedFreeSpaces}
-                onChange={(event) => setMinPredictedFreeSpaces(event.target.value)}
-                placeholder="Any availability"
-              />
-            </label>
-          </div>
-          {activeFilters && filteredResults.length < results.length && (
-            <p className="filter-hidden-hint" aria-live="polite">
-              {results.length - filteredResults.length} hidden by filters
-            </p>
-          )}
-
-          {filteredResults.length > 0 ? (
-            <>
-              <ParkingMap
-                results={filteredResults}
-                mode={mode}
-                selectedParkingId={visibleSelectedParkingId}
-                onSelect={setSelectedParkingId}
-              />
-              <div className="parking-card-list" aria-label="Parking options">
-                {filteredResults.map((parking) => (
-                  <ParkingCard
-                    key={parking.id}
-                    parking={parking}
-                    mode={mode}
-                    hasRecommendedOption={hasRecommendedOption}
-                    isSelected={parking.id === visibleSelectedParkingId}
-                    onSelect={setSelectedParkingId}
-                  />
-                ))}
+          {status === "success" && (
+            <div className="results-summary panel">
+              <div className="summary-icon"><Route size={19} /></div>
+              <div>
+                <strong>{results.length} recommendation{results.length === 1 ? "" : "s"} found</strong>
+                <span>Ranked by availability and combined route distance</span>
               </div>
-            </>
-          ) : results.length === 0 ? (
-            <div className="results-empty" role="status">
-              <h3>No parking options found</h3>
-              <p>There are no results to display for this search.</p>
+              <span className="summary-destination">{criteria?.destination}</span>
             </div>
-          ) : (
-            <div className="results-empty" role="status">
-              <h3>No options match these filters</h3>
-              <p>
-                Adjust the distance or predicted availability filters to see the available
-                options.
-              </p>
+          )}
+          {topResult && (
+            <ParkingMap
+              facilities={facilities}
+              routePath={topResult.routePath}
+              selectedParkingId={selectedParkingId || topResult.id}
+              onSelect={onSelectParking}
+            />
+          )}
+          {status === "success" && (
+            <div className="parking-card-list" aria-label="Ranked parking recommendations">
+              {results.map((parking, index) => (
+                <ParkingCard
+                  key={parking.id}
+                  parking={parking}
+                  rank={index + 1}
+                  isSelected={parking.id === selectedParkingId}
+                  onSelect={onSelectParking}
+                />
+              ))}
             </div>
           )}
         </>

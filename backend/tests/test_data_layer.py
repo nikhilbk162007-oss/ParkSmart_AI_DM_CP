@@ -25,7 +25,8 @@ def test_valid_parking_facility_model():
         address="FC Road, Pune",
         currentOccupancy=CurrentOccupancyMeasured(
             occupiedSpaces=150,
-            freeSpaces=50
+            freeSpaces=50,
+            vehicleCounts={"car": 150},
         )
     )
     assert facility.id == "lot-test-1"
@@ -96,7 +97,8 @@ def test_measured_occupancy_invariant_check():
             coordinates=[18.5204, 73.8567],
             currentOccupancy=CurrentOccupancyMeasured(
                 occupiedSpaces=80,
-                freeSpaces=30  # 80 + 30 = 110 != 100
+                freeSpaces=30,  # 80 + 30 = 110 != 100
+                vehicleCounts={"car": 80},
             )
         )
     assert "must equal totalCapacity" in str(exc_info.value)
@@ -138,8 +140,8 @@ def test_repository_empty_results():
 def test_api_create_duplicate_id_returns_409(client: TestClient):
     """POST /api/parking with existing ID returns standardized 409 Conflict."""
     payload = {
-        "id": "fixture-riverfront",  # already exists in fixtures
-        "name": "Duplicate Riverfront",
+        "id": "P1",  # already exists in fixtures
+        "name": "Duplicate North Parking",
         "totalCapacity": 500,
         "coordinates": [18.5204, 73.8567]
     }

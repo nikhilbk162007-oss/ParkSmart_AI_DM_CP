@@ -8,12 +8,12 @@ import importlib
 def test_get_prediction_existing_parking(client: TestClient):
     """Verify prediction endpoint calculates accurate invariants and schemas."""
     response = client.get(
-        "/api/predictions/fixture-riverfront?target_time=2026-10-25T14:30:00"
+        "/api/predictions/P1?target_time=2026-10-25T14:30:00"
     )
     assert response.status_code == 200
     pred = response.json()
-    assert pred["parkingId"] == "fixture-riverfront"
-    assert pred["totalCapacity"] == 420
+    assert pred["parkingId"] == "P1"
+    assert pred["totalCapacity"] == 50
     assert "predictedOccupiedSpaces" in pred
     assert "predictedFreeSpaces" in pred
     assert "occupancyPercentage" in pred
@@ -50,7 +50,7 @@ def test_get_prediction_when_ml_module_unavailable_returns_503(
         patch.object(settings, "ML_ADAPTER_MODE", "module"),
         patch("importlib.import_module", side_effect=import_module),
     ):
-        response = client.get("/api/predictions/fixture-riverfront")
+        response = client.get("/api/predictions/P1")
 
     assert response.status_code == 503
     data = response.json()

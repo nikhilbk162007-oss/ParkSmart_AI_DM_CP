@@ -9,7 +9,7 @@ def init_indexes():
     Idempotent database index migration script.
     Can safely be executed repeatedly against MongoDB without errors.
     """
-    print(f"Connecting to MongoDB at: {settings.MONGODB_URI}")
+    print("Connecting to the configured MongoDB server.")
     client = MongoClient(
         settings.MONGODB_URI,
         serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS
@@ -22,16 +22,16 @@ def init_indexes():
 
         print("Applying index migrations...")
         ensure_parking_indexes(db)
-        print("✅ Index migrations applied successfully.")
+        print("Index migrations applied successfully.")
 
-        # List existing indexes for verification
-        indexes = db.parking.index_information()
-        print("Current indexes on 'parking' collection:")
-        for idx_name, idx_info in indexes.items():
-            print(f" - {idx_name}: {idx_info['key']}")
+        for collection_name in ("parking", "users", "revoked_tokens"):
+            indexes = db[collection_name].index_information()
+            print(f"Current indexes on '{collection_name}' collection:")
+            for idx_name, idx_info in indexes.items():
+                print(f" - {idx_name}: {idx_info['key']}")
 
     except Exception as e:
-        print(f"❌ Failed to run index migration: {e}")
+        print(f"Failed to run index migration ({type(e).__name__}).")
         sys.exit(1)
     finally:
         client.close()

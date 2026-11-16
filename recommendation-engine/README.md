@@ -1,59 +1,72 @@
 # ParkSmart AI Recommendation Engine
 
-This module implements the PRD 4 recommendation engine for ParkSmart AI.
+The package retains the original recommendation function and adds the
+university-campus route and recommendation flow used by the backend.
 
-## What it does
+## Campus recommendations
 
-- models parking locations and destination as weighted graph vertices
-- computes shortest paths with Dijkstra's algorithm
-- filters candidates using availability and distance constraints
-- ranks options with a documented availability-first, distance-second score
+`campus_graph.py` is the authoritative fictional campus map. It defines
+stable node IDs and undirected road edges weighted in integer metres. There
+are two gates, five destinations, four parking facilities, and the junctions
+needed to connect them. The graph uses no geographic coordinates or external
+map service.
 
-## Ranking rule
+`shortest_path(graph, start, end)` in `dijkstra.py` uses heap-based Dijkstra
+and returns `(distance, ordered_node_ids)`. Unreachable nodes return `(None, [])`;
+unknown nodes raise `ValueError`.
 
-The engine uses the following deterministic normalized score:
+`recommend_campus_parking(request)` expects a destination, optional entry gate
+and vehicle type, and candidates containing facility IDs, capacity, accepted
+vehicle types, simulated occupancy and vehicle counts. It excludes full,
+incompatible, invalid, or unreachable candidates. The backend supplies these
+candidate occupancy values from the parking repository; the module neither
+hardcodes occupancy nor calls the ML predictor.
 
-score = 0.6 * (predicted_free_spaces / total_capacity) + 0.4 * (1 / (1 + route_distance_km))
+The deterministic score is:
 
-Weights are configurable via the request constraints `availabilityWeight` and
-`proximityWeight`; they are normalized to sum to one. The defaults prioritize
-availability while still accounting for proximity. Exact score ties are broken
-by the stable option ID.
+```text
+0.6 * (availableSpaces / totalCapacity)
++ 0.4 * (1 / (1 + totalDistanceMeters / 1000))
+```
 
-Destination lookups use whole-phrase matches for known Pune places. Unrecognized
-destinations use the candidate-set centre as a clearly disclosed reference;
-they are never silently geocoded to central Pune. Sparse k-nearest-neighbour
-graphs use Dijkstra shortest paths with haversine edge lengths multiplied by
-`ROAD_DETOUR_FACTOR=1.3`.
+`totalDistanceMeters` is the sum of the gate-to-parking driving route and the
+parking-to-destination walking route. Scores are sorted descending, with exact
+ties broken by stable facility ID. Results include both segment paths, total
+route nodes, available spaces, provenance, score and a recommendation reason.
+Occupancy values are simulated state, not live sensor data.
 
-Facilities with no predicted availability remain in the output, last, with the
-status `Full at arrival`. All coordinates and predictions retain their data
-provenance; the engine does not create live data.
-
-## Example usage
+Example:
 
 ```python
-from recommendation_engine.dijkstra import rank_parking_candidates
+from recommendation_engine.campus_recommendation import recommend_campus_parking
 
-request = {
-    "destination": "Riverfront, Pune",
-    "arrivalTime": "2026-10-25T14:30:00+05:30",
-    "candidates": [
-        {
-            "id": "fixture-riverfront",
-            "name": "Riverfront Parking House",
-            "totalCapacity": 420,
-            "coordinates": [18.5204, 73.8567],
-            "predictedOccupiedSpaces": 286,
-            "predictedFreeSpaces": 134,
-        }
-    ],
-    "constraints": {"maxWalkingDistanceKm": 3.0},
-}
-
-result = rank_parking_candidates(request)
+result = recommend_campus_parking({
+    "destination": "Library",
+    "entryGate": "gate_north",
+    "vehicleType": "car",
+    "candidates": [{
+        "id": "P1",
+        "name": "North Parking",
+        "totalCapacity": 50,
+        "acceptedVehicleTypes": ["car", "two-wheeler"],
+        "isSimulated": True,
+        "dataSource": "simulated-campus-v1",
+        "currentOccupancy": {
+            "occupiedSpaces": 15,
+            "freeSpaces": 35,
+            "vehicleCounts": {"car": 15, "two-wheeler": 0},
+        },
+    }],
+})
 print(result["rankedOptions"])
 ```
+
+## Retained legacy recommendation
+
+`rank_parking_candidates` remains available for existing clients and tests. It
+uses the original coordinate-based sparse graph and legacy destination
+resolution. That flow is not used by the campus endpoint; its geographic
+distances and fixtures should not be interpreted as campus routes.
 
 ## Install
 

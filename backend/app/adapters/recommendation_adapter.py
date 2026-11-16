@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 import math
 import logging
 import httpx
-from app.schemas.recommendation import ParkingOption
+from app.schemas.recommendation import CampusParkingRecommendation, ParkingOption
 from app.integrations.recommendation_contract import (
     RecommendationEngineRequest,
     RecommendationEngineResponse,
@@ -40,6 +40,54 @@ class BaseRecommendationAdapter(ABC):
     ) -> List[ParkingOption]:
         """Rank parking candidates and assign recommendation status and explanations."""
         pass
+
+    @abstractmethod
+    async def rank_campus_parking_options(
+        self,
+        destination: str,
+        entry_gate: str,
+        vehicle_type: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[CampusParkingRecommendation]:
+        """Rank eligible campus lots using the predefined campus road graph."""
+        pass
+
+
+async def _rank_campus_options(
+    destination: str,
+    entry_gate: str,
+    vehicle_type: str,
+    candidates: List[Dict[str, Any]],
+) -> List[CampusParkingRecommendation]:
+    try:
+        from recommendation_engine.campus_recommendation import recommend_campus_parking
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise IntegrationUnavailableError(
+            "Campus Recommendation Engine",
+            f"Module 'recommendation_engine.campus_recommendation' is unavailable: {exc}",
+        ) from exc
+
+    try:
+        response = await asyncio.to_thread(
+            recommend_campus_parking,
+            {
+                "destination": destination,
+                "entryGate": entry_gate,
+                "vehicleType": vehicle_type,
+                "candidates": candidates,
+            },
+        )
+        return [
+            CampusParkingRecommendation(**item)
+            for item in response["rankedOptions"]
+        ]
+    except IntegrationUnavailableError:
+        raise
+    except Exception as exc:
+        raise IntegrationUnavailableError(
+            "Campus Recommendation Engine",
+            f"Campus recommendation failed: {exc}",
+        ) from exc
 
 
 def haversine_distance(coord1: List[float], coord2: List[float]) -> float:
@@ -156,6 +204,17 @@ class MockRecommendationAdapter(BaseRecommendationAdapter):
 
         return results
 
+    async def rank_campus_parking_options(
+        self,
+        destination: str,
+        entry_gate: str,
+        vehicle_type: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[CampusParkingRecommendation]:
+        return await _rank_campus_options(
+            destination, entry_gate, vehicle_type, candidates
+        )
+
 
 class ModuleRecommendationAdapter(BaseRecommendationAdapter):
     """
@@ -197,6 +256,17 @@ class ModuleRecommendationAdapter(BaseRecommendationAdapter):
                 raise ValueError("Recommendation engine returned invalid structure.")
         except Exception as e:
             raise IntegrationUnavailableError("Recommendation Engine", f"Execution failed: {e}")
+
+    async def rank_campus_parking_options(
+        self,
+        destination: str,
+        entry_gate: str,
+        vehicle_type: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[CampusParkingRecommendation]:
+        return await _rank_campus_options(
+            destination, entry_gate, vehicle_type, candidates
+        )
 
 
 class HttpRecommendationAdapter(BaseRecommendationAdapter):
@@ -242,6 +312,19 @@ class HttpRecommendationAdapter(BaseRecommendationAdapter):
             )
         except Exception as e:
             raise IntegrationUnavailableError("Recommendation Engine", f"Invalid response: {e}")
+
+    async def rank_campus_parking_options(
+        self,
+        destination: str,
+        entry_gate: str,
+        vehicle_type: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[CampusParkingRecommendation]:
+        raise IntegrationUnavailableError(
+            "Recommendation Engine",
+            "The configured HTTP recommendation service does not implement "
+            "the campus graph contract; use mock or module mode.",
+        )
 
 
 def get_recommendation_adapter(mode: Optional[str] = None) -> BaseRecommendationAdapter:

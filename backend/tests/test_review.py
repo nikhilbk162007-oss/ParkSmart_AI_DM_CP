@@ -39,7 +39,7 @@ from app.repositories.dependencies import get_parking_repository
 from app.services.parking_service import ParkingService
 
 
-VALID_FIXTURE_ID = "fixture-riverfront"
+VALID_FIXTURE_ID = "P1"
 
 
 def _cleanup():
@@ -152,9 +152,9 @@ class TestParkingFacilityModelValidation:
                 coordinates=[18.52, -181.0],
             )
 
-    def test_missing_coordinates_rejected(self):
-        with pytest.raises(ValidationError):
-            ParkingFacility(id="x", name="X", totalCapacity=100)
+    def test_missing_coordinates_allowed_for_fictional_campus_facility(self):
+        facility = ParkingFacility(id="x", name="X", totalCapacity=100)
+        assert facility.coordinates is None
 
     def test_occupied_exceeds_capacity_rejected(self):
         with pytest.raises(ValidationError, match="cannot exceed totalCapacity"):
@@ -162,7 +162,8 @@ class TestParkingFacilityModelValidation:
                 id="x", name="X", totalCapacity=100,
                 coordinates=[18.52, 73.85],
                 currentOccupancy=CurrentOccupancyMeasured(
-                    occupiedSpaces=110, freeSpaces=0
+                    occupiedSpaces=110, freeSpaces=0,
+                    vehicleCounts={"car": 110},
                 ),
             )
 
@@ -172,7 +173,8 @@ class TestParkingFacilityModelValidation:
                 id="x", name="X", totalCapacity=100,
                 coordinates=[18.52, 73.85],
                 currentOccupancy=CurrentOccupancyMeasured(
-                    occupiedSpaces=60, freeSpaces=50
+                    occupiedSpaces=60, freeSpaces=50,
+                    vehicleCounts={"car": 60},
                 ),
             )
 
@@ -194,7 +196,11 @@ class TestParkingFacilityModelValidation:
             )
 
     def test_measured_occupancy_auto_computes_percentage(self):
-        occ = CurrentOccupancyMeasured(occupiedSpaces=75, freeSpaces=25)
+        occ = CurrentOccupancyMeasured(
+            occupiedSpaces=75,
+            freeSpaces=25,
+            vehicleCounts={"car": 75},
+        )
         assert occ.occupancy_percentage == 75.0
 
     def test_is_simulated_defaults_to_true(self):
@@ -276,13 +282,14 @@ class TestAPISchemaValidation:
         })
         assert res.status_code == 422
 
-    def test_post_parking_missing_coordinates_returns_422(self, client: TestClient):
+    def test_post_parking_missing_coordinates_is_allowed(self, client: TestClient):
         res = client.post("/api/parking", json={
             "id": "lot-no-coords",
             "name": "No Coords",
             "totalCapacity": 100,
         })
-        assert res.status_code == 422
+        assert res.status_code == 201
+        assert res.json()["coordinates"] is None
 
     def test_post_parking_negative_capacity_returns_422(self, client: TestClient):
         res = client.post("/api/parking", json={
@@ -327,7 +334,11 @@ class TestAPISchemaValidation:
             "name": "Overflow",
             "totalCapacity": 100,
             "coordinates": [18.52, 73.85],
-            "currentOccupancy": {"occupiedSpaces": 150, "freeSpaces": 0},
+            "currentOccupancy": {
+                "occupiedSpaces": 150,
+                "freeSpaces": 0,
+                "vehicleCounts": {"car": 150},
+            },
         })
         assert res.status_code == 422
 
@@ -337,7 +348,11 @@ class TestAPISchemaValidation:
             "name": "Mismatch",
             "totalCapacity": 100,
             "coordinates": [18.52, 73.85],
-            "currentOccupancy": {"occupiedSpaces": 60, "freeSpaces": 60},
+            "currentOccupancy": {
+                "occupiedSpaces": 60,
+                "freeSpaces": 60,
+                "vehicleCounts": {"car": 60},
+            },
         })
         assert res.status_code == 422
 
@@ -569,7 +584,7 @@ class TestPredictionsAPI:
 class TestRecommendationsAPI:
     def test_recommendations_ids_unique(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Pune",
+            "destination": "Library",
             "arrivalTime": "2026-10-25T14:30:00",
         })
         assert res.status_code == 200
@@ -578,30 +593,30 @@ class TestRecommendationsAPI:
 
     def test_recommendation_schema_fields(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Riverfront, Pune",
-            "arrivalTime": "2026-10-25T09:00:00",
+            "destination": "Library",
+            "entryGate": "gate_north",
+            "vehicleType": "car",
         })
         assert res.status_code == 200
         for opt in res.json():
             assert "id" in opt
             assert "name" in opt
             assert "totalCapacity" in opt
-            assert "predictedOccupiedSpaces" in opt
-            assert "predictedFreeSpaces" in opt
-            assert "distanceKm" in opt
-            assert "coordinates" in opt
-            assert "occupiedSpaces" not in opt
-            assert "currentOccupancy" not in opt
+            assert "availableSpaces" in opt
+            assert "occupiedSpaces" in opt
+            assert "routeDistanceMeters" in opt
+            assert "walkingDistanceMeters" in opt
+            assert "routePath" in opt
+            assert "recommendationReason" in opt
 
     def test_recommendation_invariant(self, client: TestClient):
         res = client.post("/api/recommendations", json={
-            "destination": "Pune",
-            "arrivalTime": "2026-10-25T14:30:00",
+            "destination": "Library",
         })
         assert res.status_code == 200
         for opt in res.json():
             assert (
-                opt["predictedOccupiedSpaces"] + opt["predictedFreeSpaces"]
+                opt["occupiedSpaces"] + opt["availableSpaces"]
                 == opt["totalCapacity"]
             )
 
@@ -611,9 +626,9 @@ class TestRecommendationsAPI:
         })
         assert res.status_code == 422
 
-    def test_recommendation_missing_arrival_time_returns_422(self, client: TestClient):
-        res = client.post("/api/recommendations", json={"destination": "Pune"})
-        assert res.status_code == 422
+    def test_recommendation_arrival_time_remains_optional(self, client: TestClient):
+        res = client.post("/api/recommendations", json={"destination": "Library"})
+        assert res.status_code == 200
 
     def test_recommendation_invalid_json_returns_422(self, client: TestClient):
         res = client.post(
@@ -633,24 +648,14 @@ class TestRecommendationsAPI:
     def test_rec_engine_unavailable_returns_503_not_fabricated_200(
         self, client: TestClient
     ):
-        """Recommendation engine import failure → 503, never fabricated 200 list."""
-        import importlib
-
-        real_import_module = importlib.import_module
-
-        def fake_import(name, package=None):
-            if name == "recommendation_engine.dijkstra":
-                raise ModuleNotFoundError(
-                    "No module named 'recommendation_engine.dijkstra'",
-                    name="recommendation_engine.dijkstra",
-                )
-            return real_import_module(name, package)
-
-        with patch.object(settings, "REC_ADAPTER_MODE", "module"):
-            with patch("importlib.import_module", side_effect=fake_import):
+        """Missing campus graph module returns a structured 503."""
+        with patch.dict(
+            "sys.modules",
+            {"recommendation_engine.campus_recommendation": None},
+        ):
+            with patch.object(settings, "REC_ADAPTER_MODE", "module"):
                 res = client.post("/api/recommendations", json={
-                    "destination": "Pune",
-                    "arrivalTime": "2026-10-25T14:30:00",
+                    "destination": "Library",
                 })
         assert res.status_code == 503
         data = res.json()
@@ -662,8 +667,7 @@ class TestRecommendationsAPI:
         app.dependency_overrides[get_parking_repository] = lambda: empty_repo
         try:
             res = client.post("/api/recommendations", json={
-                "destination": "Pune",
-                "arrivalTime": "2026-10-25T14:30:00",
+                "destination": "Library",
             })
             assert res.status_code == 200
             assert res.json() == []
@@ -893,7 +897,7 @@ class TestStableStringIDs:
             assert isinstance(item["id"], str)
             assert len(item["id"]) > 0
 
-    def test_fixture_ids_use_fixture_prefix(self, client: TestClient):
+    def test_campus_ids_are_stable_parking_ids(self, client: TestClient):
         res = client.get("/api/parking")
         ids = [i["id"] for i in res.json()]
-        assert any(fid.startswith("fixture-") for fid in ids)
+        assert ids == ["P1", "P2", "P3", "P4"]

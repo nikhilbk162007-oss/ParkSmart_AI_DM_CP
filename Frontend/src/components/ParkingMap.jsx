@@ -1,202 +1,139 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  MapContainer,
-  Marker,
-  Popup,
-  TileLayer,
-  useMap,
-} from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { useMemo } from "react";
 
-export const INDIA_BOUNDS = [
-  [6.5, 68.1],
-  [35.7, 97.4],
+const NODES = {
+  gate_north: { label: "North Gate", x: 70, y: 82, kind: "gate" },
+  gate_south: { label: "South Gate", x: 845, y: 422, kind: "gate" },
+  road_north: { label: "North junction", x: 230, y: 82, kind: "road" },
+  road_central: { label: "Central junction", x: 440, y: 226, kind: "road" },
+  road_south: { label: "South junction", x: 680, y: 390, kind: "road" },
+  road_library: { label: "Library junction", x: 570, y: 100, kind: "road" },
+  road_academic: { label: "Academic junction", x: 690, y: 128, kind: "road" },
+  road_canteen: { label: "Canteen junction", x: 804, y: 214, kind: "road" },
+  road_auditorium: { label: "Auditorium junction", x: 500, y: 326, kind: "road" },
+  road_sports: { label: "Sports junction", x: 758, y: 344, kind: "road" },
+  dest_library: { label: "Library", x: 570, y: 42, kind: "destination" },
+  dest_academic_block: { label: "Academic Block", x: 710, y: 58, kind: "destination" },
+  dest_canteen: { label: "Canteen", x: 850, y: 216, kind: "destination" },
+  dest_auditorium: { label: "Auditorium", x: 498, y: 390, kind: "destination" },
+  dest_sports_complex: { label: "Sports Complex", x: 760, y: 426, kind: "destination" },
+  P1: { label: "North Parking", x: 205, y: 140, kind: "parking" },
+  P2: { label: "Library Parking", x: 554, y: 160, kind: "parking" },
+  P3: { label: "South Parking", x: 614, y: 438, kind: "parking" },
+  P4: { label: "Sports Parking", x: 814, y: 322, kind: "parking" },
+};
+
+const EDGES = [
+  ["gate_north", "road_north", 120], ["gate_south", "road_south", 100],
+  ["road_north", "road_central", 180], ["road_central", "road_south", 220],
+  ["road_central", "road_library", 100], ["road_library", "dest_library", 60],
+  ["road_library", "P2", 45], ["road_library", "road_academic", 130],
+  ["road_academic", "dest_academic_block", 55], ["road_academic", "road_canteen", 110],
+  ["road_canteen", "dest_canteen", 40], ["road_central", "road_canteen", 150],
+  ["road_central", "road_auditorium", 150], ["road_auditorium", "dest_auditorium", 50],
+  ["road_auditorium", "road_sports", 180], ["road_sports", "dest_sports_complex", 75],
+  ["road_sports", "P4", 65], ["road_south", "P3", 45], ["road_north", "P1", 50],
 ];
-export const PUNE_MAP_CENTER = [18.5204, 73.8567];
 
-export function isValidCoordinatePair(coordinates) {
-  return (
-    Array.isArray(coordinates) &&
-    coordinates.length === 2 &&
-    Number.isFinite(coordinates[0]) &&
-    Number.isFinite(coordinates[1]) &&
-    coordinates[0] >= -90 &&
-    coordinates[0] <= 90 &&
-    coordinates[1] >= -180 &&
-    coordinates[1] <= 180
+function occupancyColor(facility) {
+  const capacity = facility?.totalCapacity;
+  const occupied = facility?.currentOccupancy?.occupiedSpaces;
+  if (!Number.isFinite(capacity) || capacity <= 0 || !Number.isFinite(occupied)) return "var(--text-muted)";
+  const ratio = occupied / capacity;
+  return ratio >= 0.9 ? "var(--danger)" : ratio >= 0.7 ? "var(--warning)" : "var(--accent)";
+}
+
+function ParkingMap({ facilities = [], routePath = [], selectedParkingId, onSelect }) {
+  const facilitiesById = useMemo(
+    () => new Map(facilities.map((facility) => [facility.id, facility])),
+    [facilities],
   );
-}
-
-export function isIndiaCoordinatePair(coordinates) {
-  return (
-    isValidCoordinatePair(coordinates) &&
-    coordinates[0] >= INDIA_BOUNDS[0][0] &&
-    coordinates[0] <= INDIA_BOUNDS[1][0] &&
-    coordinates[1] >= INDIA_BOUNDS[0][1] &&
-    coordinates[1] <= INDIA_BOUNDS[1][1]
-  );
-}
-
-function makeParkingIcon(markerNumber, isSelected) {
-  return L.divIcon({
-    className: "parksmart-marker-icon",
-    html: `<span class="parking-map-marker${isSelected ? " is-selected" : ""}"><span>${markerNumber}</span></span>`,
-    iconSize: [36, 42],
-    iconAnchor: [18, 21],
-    popupAnchor: [0, -19],
-  });
-}
-
-function getParkingName(parking, markerNumber) {
-  return typeof parking.name === "string" && parking.name.trim()
-    ? parking.name.trim()
-    : `Parking option ${markerNumber}`;
-}
-
-function MapViewController({ selectedParking }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (selectedParking) {
-      map.setView(selectedParking.coordinates, map.getZoom(), { animate: false });
+  const routeEdges = useMemo(() => {
+    const active = new Set();
+    for (let index = 1; index < routePath.length; index += 1) {
+      active.add([routePath[index - 1], routePath[index]].sort().join("|"));
     }
-  }, [map, selectedParking]);
-
-  return null;
-}
-
-function ParkingMarker({ parking, markerNumber, isSelected, onSelect, mode }) {
-  const markerRef = useRef(null);
-  const name = getParkingName(parking, markerNumber);
-  const capacity =
-    Number.isInteger(parking.totalCapacity) && parking.totalCapacity >= 0
-      ? parking.totalCapacity
-      : null;
-  useEffect(() => {
-    if (isSelected) {
-      markerRef.current?.openPopup();
-    } else {
-      markerRef.current?.closePopup();
-    }
-  }, [isSelected]);
-
-  const capacityText = capacity === null ? "Not provided" : `${capacity} spaces`;
-  const distanceText =
-    typeof parking.distanceKm === "number" && Number.isFinite(parking.distanceKm) && parking.distanceKm >= 0
-      ? `${parking.distanceKm} km`
-      : "Not provided";
-  const predictedFreeText =
-    Number.isInteger(parking.predictedFreeSpaces) &&
-    parking.predictedFreeSpaces >= 0 &&
-    (capacity === null || parking.predictedFreeSpaces <= capacity)
-      ? `${parking.predictedFreeSpaces} spaces`
-      : parking.predictedFreeSpaces === null || parking.predictedFreeSpaces === undefined
-        ? "Not provided"
-        : "Invalid value";
+    return active;
+  }, [routePath]);
 
   return (
-    <Marker
-      ref={markerRef}
-      position={parking.coordinates}
-      icon={makeParkingIcon(markerNumber, isSelected)}
-      title={name}
-      alt={`${name}${mode === "demo" ? ", simulated demo marker" : ""}`}
-      keyboard
-      eventHandlers={{ click: () => onSelect(parking.id) }}
-    >
-      <Popup>
-        <div className="parking-map-popup">
-          {mode === "demo" && <strong className="popup-simulated">Simulated demo option</strong>}
-          <strong>{name}</strong>
-          <span>Total capacity: {capacityText}</span>
-          <span>Predicted free spaces: {predictedFreeText}</span>
-          <span>Reported distance: {distanceText}</span>
-          {mode === "demo" && <span>Demonstration coordinate only</span>}
-        </div>
-      </Popup>
-    </Marker>
-  );
-}
-
-function ParkingMap({ results, mode, selectedParkingId, onSelect }) {
-  const [tileErrors, setTileErrors] = useState(0);
-  const mappedParking = useMemo(
-    () => results.filter((parking) => isIndiaCoordinatePair(parking.coordinates)),
-    [results],
-  );
-  const selectedParking = mappedParking.find((parking) => parking.id === selectedParkingId);
-
-  useEffect(() => {
-    setTileErrors(0);
-  }, [mappedParking]);
-
-  return (
-    <section className="parking-map-section" aria-labelledby="parking-map-title">
-      <div className="parking-map-heading">
+    <section className="panel map-panel" aria-labelledby="campus-map-title">
+      <div className="panel-heading">
         <div>
-          <p className="results-eyebrow">LOCATION OVERVIEW</p>
-          <h3 id="parking-map-title">Parking map</h3>
+          <p className="eyebrow">CAMPUS OVERVIEW</p>
+          <h2 id="campus-map-title">Campus map</h2>
         </div>
-        <span>{mappedParking.length} map {mappedParking.length === 1 ? "marker" : "markers"}</span>
+        <span className="map-key"><i className="map-key-route" /> Recommended route</span>
       </div>
-
-      {mode === "demo" && (
-        <p className="map-simulation-notice" role="note">
-          Demonstration map only. Parking options and their coordinates are simulated and do not
-          identify verified parking facilities or live availability.
-        </p>
-      )}
-
-      {mappedParking.length === 0 ? (
-        <div className="parking-map-fallback" role="status">
-          <strong>Map markers are unavailable</strong>
-          <span>
-            {mode === "demo"
-              ? "No valid simulated coordinates were provided for these demonstration options."
-              : "No valid coordinates were provided with these parking results."}
-          </span>
-        </div>
-      ) : tileErrors > 5 ? (
-        <div className="parking-map-fallback" role="alert">
-          <strong>Map tiles could not be displayed</strong>
-          <span>
-            The map background is unavailable. Parking options remain available in the results
-            list.
-          </span>
-        </div>
-      ) : (
-        <div className="parking-map-frame" role="region" aria-label="Interactive parking map">
-          <MapContainer
-            center={PUNE_MAP_CENTER}
-            zoom={14}
-            minZoom={5}
-            maxBounds={INDIA_BOUNDS}
-            maxBoundsViscosity={1}
-            scrollWheelZoom={false}
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              eventHandlers={{
-                tileerror: () => setTileErrors((count) => count + 1),
-                tileload: () => setTileErrors(0),
-              }}
-            />
-            <MapViewController selectedParking={selectedParking} />
-            {mappedParking.map((parking, index) => (
-              <ParkingMarker
-                key={parking.id}
-                parking={parking}
-                markerNumber={index + 1}
-                isSelected={parking.id === selectedParkingId}
-                onSelect={onSelect}
-                mode={mode}
-              />
-            ))}
-          </MapContainer>
-        </div>
-      )}
+      <div className="schematic-wrap" role="region" aria-label="Interactive schematic campus map">
+        <svg viewBox="0 0 920 500" className="campus-schematic" role="img" aria-labelledby="map-title map-description">
+          <title id="map-title">University campus schematic map</title>
+          <desc id="map-description">Presentation-only campus layout with two gates, five destinations, four parking facilities and connected roads. Not geographically accurate.</desc>
+          <path className="map-campus-boundary" d="M25 35H885V465H25z" />
+          <text className="map-map-label" x="42" y="58">UNIVERSITY CAMPUS · SCHEMATIC</text>
+          {EDGES.map(([from, to, distance]) => {
+            const first = NODES[from];
+            const second = NODES[to];
+            const highlighted = routeEdges.has([from, to].sort().join("|"));
+            const midpointX = (first.x + second.x) / 2;
+            const midpointY = (first.y + second.y) / 2;
+            return (
+              <g key={`${from}-${to}`}>
+                <line
+                  className={`campus-road${highlighted ? " is-route" : ""}`}
+                  x1={first.x} y1={first.y} x2={second.x} y2={second.y}
+                />
+                <text className="road-distance" x={midpointX + 4} y={midpointY - 5}>{distance} m</text>
+              </g>
+            );
+          })}
+          {Object.entries(NODES).map(([id, node]) => {
+            if (node.kind === "road") {
+              return <circle key={id} className="road-junction" cx={node.x} cy={node.y} r="4" />;
+            }
+            if (node.kind === "parking") {
+              const facility = facilitiesById.get(id);
+              const isSelected = selectedParkingId === id;
+              const occupied = facility?.currentOccupancy?.occupiedSpaces;
+              const available = facility?.availableSpaces;
+              const capacity = facility?.totalCapacity;
+              return (
+                <g
+                  key={id}
+                  className={`map-node map-parking${isSelected ? " is-selected" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${node.label}: ${Number.isInteger(available) ? `${available} available` : "availability unavailable"}`}
+                  onClick={() => onSelect?.(id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelect?.(id);
+                    }
+                  }}
+                >
+                  <circle cx={node.x} cy={node.y} r="15" className="parking-marker-ring" style={{ stroke: occupancyColor(facility) }} />
+                  <text x={node.x} y={node.y + 4} textAnchor="middle" className="parking-marker-id">{id}</text>
+                  <text x={node.x} y={node.y + 31} textAnchor="middle" className="map-node-label">{node.label}</text>
+                  <text x={node.x} y={node.y + 44} textAnchor="middle" className="map-node-meta">
+                    {Number.isInteger(available) && Number.isInteger(capacity) ? `${available}/${capacity} free` : Number.isInteger(occupied) ? `${occupied} occupied` : "—"}
+                  </text>
+                </g>
+              );
+            }
+            const gate = node.kind === "gate";
+            return (
+              <g key={id} className={`map-node ${gate ? "map-gate" : "map-destination"}`}>
+                <circle cx={node.x} cy={node.y} r={gate ? 10 : 8} />
+                <text x={node.x} y={node.y + (gate ? 28 : -14)} textAnchor="middle" className="map-node-label">{node.label}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="map-caption">
+        <span>Node positions are for presentation only; this schematic is not geographically accurate.</span>
+        {routePath.length > 0 && <span className="route-active-label">Route highlighted</span>}
+      </div>
     </section>
   );
 }

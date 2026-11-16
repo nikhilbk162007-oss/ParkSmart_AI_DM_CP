@@ -27,12 +27,11 @@ class MongoDBClient:
             self._db = self._client[settings.MONGODB_DB_NAME]
             # Perform immediate ping to verify connectivity
             self._client.admin.command("ping")
-            logger.info("Successfully connected to MongoDB at %s", settings.MONGODB_URI)
+            logger.info("Successfully connected to the configured MongoDB server.")
         except (PyMongoError, ServerSelectionTimeoutError, Exception) as e:
             logger.warning(
-                "MongoDB is not currently reachable at %s (%s). API will report DB offline.",
-                settings.MONGODB_URI,
-                str(e)
+                "MongoDB is not currently reachable (%s). API will report DB offline.",
+                type(e).__name__,
             )
             failed_client = self._client
             self._client = None
@@ -41,7 +40,7 @@ class MongoDBClient:
                 try:
                     failed_client.close()
                 except Exception as close_error:
-                    logger.error("Error closing failed MongoDB client: %s", close_error)
+                    logger.error("Error closing failed MongoDB client (%s).", type(close_error).__name__)
 
     def disconnect(self) -> None:
         """Cleanly close PyMongo client connections."""

@@ -1,177 +1,215 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getParkingResults } from "../services/parkingResultsProvider.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../services/backendApiAdapter.js", () => ({
+  fetchCurrentUser: vi.fn(),
+  fetchCampusRecommendations: vi.fn(),
+  fetchParkingFacilities: vi.fn(),
+  getAuthToken: vi.fn(),
+  login: vi.fn(),
+  registerAccount: vi.fn(),
+  recordVehicleEvent: vi.fn(),
+  revokeSession: vi.fn(),
+  setAuthToken: vi.fn(),
+}));
+
+import {
+  fetchCurrentUser,
+  fetchCampusRecommendations,
+  fetchParkingFacilities,
+  getAuthToken,
+  login,
+  recordVehicleEvent,
+  revokeSession,
+  setAuthToken,
+} from "../services/backendApiAdapter.js";
 import App from "../App.jsx";
 
-vi.mock("../services/parkingResultsProvider.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    getParkingResults: vi.fn(actual.getParkingResults),
-  };
-});
+const initialFacility = {
+  id: "P1",
+  name: "North Parking",
+  totalCapacity: 50,
+  availableSpaces: 35,
+  acceptedVehicleTypes: ["car", "two-wheeler"],
+  currentOccupancy: {
+    occupiedSpaces: 15,
+    freeSpaces: 35,
+    vehicleCounts: { car: 15, "two-wheeler": 0 },
+  },
+  isSimulated: true,
+  dataSource: "simulated-campus-v1",
+};
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+const updatedFacility = {
+  ...initialFacility,
+  availableSpaces: 34,
+  currentOccupancy: {
+    occupiedSpaces: 16,
+    freeSpaces: 34,
+    vehicleCounts: { car: 16, "two-wheeler": 0 },
+  },
+};
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
+const recommendation = {
+  id: "P1",
+  name: "North Parking",
+  totalCapacity: 50,
+  availableSpaces: 35,
+  occupiedSpaces: 15,
+  acceptedVehicleTypes: ["car", "two-wheeler"],
+  isSimulated: true,
+  dataSource: "simulated-campus-v1",
+  entryGate: "gate_north",
+  destination: "dest_library",
+  routeDistanceMeters: 170,
+  walkingDistanceMeters: 390,
+  totalDistanceMeters: 560,
+  routePath: ["gate_north", "road_north", "P1", "road_library", "dest_library"],
+  recommendationReason: "35 spaces available; balanced route.",
+  recommendationStatus: "Recommended",
+};
 
-async function submitValidSearch(user) {
-  await user.type(screen.getByLabelText("YOUR DESTINATION"), "Central Library");
-  await user.type(screen.getByLabelText("ARRIVAL TIME"), "2026-10-25T10:30");
-  await user.click(screen.getByRole("button", { name: "Find parking" }));
+function goTo(user, section) {
+  return user.click(within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("button", { name: new RegExp(section) }));
 }
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
+function startPortal(role = "user", path = role === "admin" ? "/admin" : "/user") {
+  getAuthToken.mockReturnValue("test-access-token");
+  fetchCurrentUser.mockResolvedValue({ username: "campus-test", role });
+  window.history.replaceState({}, "", path);
 }
 
-describe("App search results", () => {
-  it("shows demo results only after a valid search submission", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "demo");
-    const user = userEvent.setup();
-    render(<App />);
-
-    expect(screen.queryByRole("heading", { name: "Parking options" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Riverfront Parking House")).not.toBeInTheDocument();
-
-    await submitValidSearch(user);
-
-    expect(await screen.findByRole("heading", { name: "Parking options" })).toBeInTheDocument();
-    expect(screen.getByText("Simulated development data")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 3, name: "Riverfront Parking House" }),
-    ).toBeInTheDocument();
+describe("ParkSmart campus dashboard", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    startPortal();
+    fetchParkingFacilities.mockResolvedValue([initialFacility]);
+    fetchCampusRecommendations.mockResolvedValue([recommendation]);
+    recordVehicleEvent.mockResolvedValue(updatedFacility);
+    revokeSession.mockResolvedValue(null);
   });
 
-  it("does not show results after invalid search submission", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "demo");
-    const user = userEvent.setup();
+  it("loads dashboard metrics from backend facility records", async () => {
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "Find parking" }));
-
-    expect(screen.getByText("Enter a destination to continue.")).toBeInTheDocument();
-    expect(screen.getByText("Choose a valid arrival date and time.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Parking options" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Backend connected")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Campus dashboard" })).toBeInTheDocument();
+    expect(screen.getByText("50", { selector: ".metric-card strong" })).toBeInTheDocument();
+    expect(screen.getByText("15", { selector: ".metric-card strong" })).toBeInTheDocument();
+    expect(screen.getByText("35", { selector: ".metric-card strong" })).toBeInTheDocument();
+    expect(screen.getAllByText(/simulated campus data/i).length).toBeGreaterThan(0);
   });
 
-  it("submits API searches to the backend and renders returned options", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "api");
-    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test///");
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [{
-        id: "api-garage",
-        name: "API Garage",
-        totalCapacity: 100,
-        predictedOccupiedSpaces: 30,
-        predictedFreeSpaces: 70,
-        distanceKm: 0.5,
-        coordinates: [18.52, 73.85],
-        recommendationStatus: "Recommended",
-        recommendationExplanation: "Closest available option.",
-      }],
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("submits selected destination, gate and vehicle type and renders backend recommendations", async () => {
     const user = userEvent.setup();
     render(<App />);
+    await screen.findByText("Backend connected");
+    await goTo(user, "Find parking");
+    await user.selectOptions(screen.getByLabelText("Destination"), "Auditorium");
+    await user.selectOptions(screen.getByLabelText("Entry gate"), "gate_south");
+    await user.selectOptions(screen.getByLabelText("Vehicle type"), "two-wheeler");
+    await user.click(within(screen.getByRole("form", { name: "Find campus parking" })).getByRole("button", { name: "Find parking" }));
 
-    await submitValidSearch(user);
-
-    expect(await screen.findByRole("heading", { name: "API Garage" })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/recommendations",
-      expect.objectContaining({ method: "POST" }),
+    expect(await screen.findByRole("article", { name: "North Parking, Recommended" })).toBeInTheDocument();
+    expect(fetchCampusRecommendations).toHaveBeenCalledWith(
+      { destination: "Auditorium", entryGate: "gate_south", vehicleType: "two-wheeler" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(requestBody.destination).toBe("Central Library");
-    expect(requestBody.arrivalTime).toMatch(/Z$/);
+    expect(screen.getByText("170 m")).toBeInTheDocument();
+    expect(screen.getByText("390 m")).toBeInTheDocument();
   });
 
-  it("shows a backend 503 message and retries API searches", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "api");
-    vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 503,
-        json: async () => ({ error: { message: "Database unavailable." } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ id: "retry", name: "Retry Garage" }],
-      });
-    vi.stubGlobal("fetch", fetchMock);
+  it("posts entry, refreshes facilities and reruns the current recommendation", async () => {
     const user = userEvent.setup();
+    startPortal("admin");
+    fetchParkingFacilities
+      .mockResolvedValueOnce([initialFacility])
+      .mockResolvedValueOnce([updatedFacility]);
+    fetchCampusRecommendations
+      .mockResolvedValueOnce([recommendation])
+      .mockResolvedValueOnce([{ ...recommendation, availableSpaces: 34, occupiedSpaces: 16 }]);
     render(<App />);
+    await screen.findByText("Backend connected");
+    await goTo(user, "Find parking");
+    await user.click(within(screen.getByRole("form", { name: "Find campus parking" })).getByRole("button", { name: "Find parking" }));
+    await screen.findByRole("article", { name: "North Parking, Recommended" });
 
-    await submitValidSearch(user);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable.");
-    await user.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("heading", { name: "Retry Garage" })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await goTo(user, "Simulation control");
+    await user.click(screen.getByRole("button", { name: "Simulate entry" }));
+    expect(recordVehicleEvent).toHaveBeenCalledWith("P1", "entry", "car");
+    expect(await screen.findByText(/Vehicle entry recorded at North Parking/i)).toBeInTheDocument();
+    expect(fetchParkingFacilities).toHaveBeenCalledTimes(2);
+    expect(fetchCampusRecommendations).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("16", { selector: ".simulation-occupancy > strong" })).toBeInTheDocument();
   });
 
-  it("does not let an older search overwrite a newer result", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "demo");
-    const firstSearch = deferred();
-    const secondSearch = deferred();
-    vi.mocked(getParkingResults)
-      .mockImplementationOnce(() => firstSearch.promise)
-      .mockImplementationOnce(() => secondSearch.promise);
-
+  it("posts a vehicle exit and displays backend rejection feedback", async () => {
     const user = userEvent.setup();
+    startPortal("admin");
+    recordVehicleEvent.mockRejectedValueOnce(new Error("No parked 'car' vehicle is available to exit."));
     render(<App />);
-    await submitValidSearch(user);
-    await user.click(screen.getByRole("button", { name: "Find parking" }));
+    await screen.findByText("Backend connected");
+    await goTo(user, "Simulation control");
+    await user.click(screen.getByRole("button", { name: "Simulate exit" }));
 
-    secondSearch.resolve({
-      mode: "api",
-      results: [{ id: "latest-result", name: "Latest search result" }],
-    });
-    expect(
-      await screen.findByRole("heading", { level: 3, name: "Latest search result" }),
-    ).toBeInTheDocument();
-
-    firstSearch.resolve({
-      mode: "api",
-      results: [{ id: "stale-result", name: "Stale search result" }],
-    });
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { level: 3, name: "Latest search result" }))
-        .toBeInTheDocument();
-      expect(
-        screen.queryByRole("heading", { level: 3, name: "Stale search result" }),
-      ).not.toBeInTheDocument();
-    });
+    expect(recordVehicleEvent).toHaveBeenCalledWith("P1", "exit", "car");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No parked 'car' vehicle");
+    expect(fetchParkingFacilities).toHaveBeenCalledTimes(1);
   });
 
-  it("resets filters when a new search is submitted", async () => {
-    vi.stubEnv("VITE_PARKING_DATA_MODE", "demo");
+  it("shows a clear backend connection error instead of demo data", async () => {
+    fetchParkingFacilities.mockRejectedValue(new Error("Connection refused"));
+    render(<App />);
+    expect(await screen.findByText("Facility data unavailable.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
+    expect(screen.getByText("Backend unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Garden District Parking")).not.toBeInTheDocument();
+  });
+
+  it("keeps simulation controls out of the regular user portal", async () => {
+    render(<App />);
+    await screen.findByText("Backend connected");
+    expect(screen.queryByRole("button", { name: "Simulation control" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open simulation controls" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Parking details" })).toBeInTheDocument();
+  });
+
+  it("redirects regular users away from admin routes", async () => {
+    startPortal("user", "/admin/simulation");
+    render(<App />);
+    await screen.findByText("Backend connected");
+    expect(window.location.pathname).toBe("/user");
+    expect(screen.queryByRole("heading", { name: "Simulation control" })).not.toBeInTheDocument();
+  });
+
+  it("redirects unauthenticated visitors to login and admins to the admin portal", async () => {
+    getAuthToken.mockReturnValue(null);
+    window.history.replaceState({}, "", "/admin");
     const user = userEvent.setup();
     render(<App />);
-    await submitValidSearch(user);
-    expect(await screen.findByRole("heading", { name: "Parking options" })).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Minimum predicted free spaces"), "9999");
-    expect(screen.getByText("3 hidden by filters")).toBeInTheDocument();
-    await user.clear(screen.getByLabelText("YOUR DESTINATION"));
-    await user.type(screen.getByLabelText("YOUR DESTINATION"), "New Destination");
-    await user.clear(screen.getByLabelText("ARRIVAL TIME"));
-    await user.type(screen.getByLabelText("ARRIVAL TIME"), "2026-10-25T12:30");
-    await user.click(screen.getByRole("button", { name: "Find parking" }));
-    expect(await screen.findByRole("heading", { level: 3, name: "Riverfront Parking House" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum predicted free spaces")).toHaveValue(null);
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Username")).toBeInTheDocument();
+
+    login.mockResolvedValue({
+      accessToken: "admin-access-token",
+      user: { username: "campus-admin", role: "admin" },
+    });
+    await user.type(screen.getByLabelText("Username"), "campus-admin");
+    await user.type(screen.getByLabelText("Password"), "password-for-test");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Backend connected")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/admin");
+    expect(screen.getByRole("button", { name: /Simulation control/ })).toBeInTheDocument();
+    expect(setAuthToken).toHaveBeenCalledWith("admin-access-token");
+  });
+
+  it("clears the session and returns to login on logout", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Backend connected");
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
+    expect(setAuthToken).toHaveBeenCalledWith(null);
+    expect(revokeSession).toHaveBeenCalledOnce();
   });
 });

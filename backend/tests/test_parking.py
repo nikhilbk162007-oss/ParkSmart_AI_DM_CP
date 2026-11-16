@@ -16,8 +16,11 @@ def test_list_parking_locations(client: TestClient):
     assert "id" in first
     assert "name" in first
     assert "totalCapacity" in first
-    assert "coordinates" in first
-    assert len(first["coordinates"]) == 2
+    assert first["isSimulated"] is True
+    assert first["acceptedVehicleTypes"]
+    assert first["availableSpaces"] == (
+        first["totalCapacity"] - first["currentOccupancy"]["occupiedSpaces"]
+    )
 
 
 def test_list_parking_with_filters(client: TestClient):
@@ -53,13 +56,13 @@ def test_list_parking_empty_results_returns_empty_array(client: TestClient):
 
 def test_get_existing_parking(client: TestClient):
     """Ensure existing facility lookup returns full valid schema."""
-    response = client.get("/api/parking/fixture-riverfront")
+    response = client.get("/api/parking/P1")
     assert response.status_code == 200
     item = response.json()
-    assert item["id"] == "fixture-riverfront"
-    assert item["name"] == "Riverfront Parking House"
-    assert item["totalCapacity"] == 420
-    assert item["coordinates"] == [18.5204, 73.8567]
+    assert item["id"] == "P1"
+    assert item["name"] == "North Parking"
+    assert item["totalCapacity"] == 50
+    assert item["coordinates"] is None
 
 
 def test_get_nonexistent_parking_returns_standard_error(client: TestClient):
